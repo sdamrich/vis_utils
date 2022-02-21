@@ -16,6 +16,8 @@ conda env create -f environment.yml
 
 Optionally: Install [openTSNE](https://github.com/sdamrich/openTSNE) from source if you want to use the t-SNE wrapper.
 
+
+Finish the installation of vis_utils.
 ```
 conda activate vis_utils
 python setup.py install
