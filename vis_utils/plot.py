@@ -2,18 +2,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pykeops
 import matplotlib
-from .utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_low_dim_sims
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+
+from .utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_low_dim_sims, keops_identity
+
+
+
 
 # Contains functionality for convenient plotting of historgrams and loss functions
+
 
 # Histograms
 def hists_from_graph_embd(graph,
                      embedding,
-                     a,
-                     b,
+                     a=1.0,
+                     b=1.0,
                      negative_sample_rate=5,
                      n_bins=100,
-                     hist_range=(0,1)
+                     hist_range=(0,1),
+                     sim_func="cauchy", # todo: adapt the notion of target similarity
+                     norm_embd = False
 ):
     """
     Computes histograms of high- and low-dimensional similarities and target similarities for all edges or just those
@@ -30,14 +38,24 @@ def hists_from_graph_embd(graph,
     """
 
     # get target similarities from graph
-    target_sim = get_target_sim(graph, negative_sample_rate=negative_sample_rate)
+    target_sim = get_target_sim(graph,
+                                negative_sample_rate=negative_sample_rate,
+                                sim_func=sim_func)
 
     # get (positive) low-dimesnional similarities from the embedding
     low_sim = compute_low_dim_psim_keops_embd(embedding, a, b)
+
+    if norm_embd:
+        low_sim_sum = low_sim.sum(0).sum()
+        low_sim = low_sim / low_sim_sum
+
     low_sim_pos = compute_low_dim_sims(embedding1=embedding[graph.row],
                                        embedding2=embedding[graph.col],
                                        a=a,
-                                       b=b)
+                                       b=b,
+                                       sim_func=sim_func)
+    if norm_embd:
+        low_sim_pos = low_sim_pos / low_sim_sum.cpu().numpy()
 
     # compute all histograms
     hist_high_pos, bins = np.histogram(graph.data,
@@ -67,10 +85,11 @@ def hists_from_graph_embd(graph,
 
 def histogram_keops(t: pykeops.torch.LazyTensor,
                     hist_range=(0, 1),
-                    bins=100):
+                    bins=100,
+                    no_diag=False):
     """
     Computs histogram from a pykeops.torch.LazyTensor
-    :param t: pykeops.torch.LazyTensor Tensor holding the values over which a histogram is built
+    :param t: pykeops.torch.LazyTensor 2D quadratic tensor holding the values over which a histogram is built
     :param hist_range: tuple of floats Lower and higher bound of the histogram range
     :param bins: int Number of bins
     :return: tuple of the historgram and the bins
@@ -79,15 +98,23 @@ def histogram_keops(t: pykeops.torch.LazyTensor,
     max_val = hist_range[1]
     min_val = hist_range[0]
 
-    if t.max(0).max() > 1.0 or t.min(0).min() < 0.0:
-        print("Warning: LazyTensor entries should be between {min_val} and {max_val}, but are between {t.min().min()} "
-              "and {t.max().max()}. Only values between {min_val} and {max_val} will be considered.")
-
     bin_size = (max_val - min_val)/n_bins
 
     bins = min_val + np.arange(n_bins+1) * bin_size
 
     hist = np.zeros(n_bins)
+
+    if no_diag:
+        # if the diagonal shall be excluded from the histogram, replace its
+        # entries with entries that will fall into the first bin.
+        id_mat = keops_identity(t.shape[0])
+        t = t * ( 1.0 - id_mat) + id_mat * (min_val + 0.5 * bin_size)
+
+
+    if t.max(0).max() > max_val or t.min(0).min() < min_val:
+        print(f"Warning: LazyTensor entries should be between {min_val} and {max_val}, but are between {t.min(0).min()} "
+              f"and {t.max(0).max()}. Only values between {min_val} and {max_val} will be considered.")
+
 
     for i, (low, high) in enumerate(zip(bins[:-1], bins[1:])):
         mask1 = 1 - (-t + float(low)).step()  # strictly greater than left bin border (can exclude 0 anyways)
@@ -96,6 +123,11 @@ def histogram_keops(t: pykeops.torch.LazyTensor,
     if np.prod(t.shape) != hist.sum():
         print(f"Historgram counts should match product of input tensor shapes, but are {np.prod(t.shape)} and "
               f"{int(hist.sum())}.")
+
+    if no_diag:
+        # exclude the extra counts in the first bin due to the diagonal
+        hist[0] -= t.shape[0]
+
     return hist.astype("int"), bins
 
 # Loss curves
@@ -318,3 +350,23 @@ def cut_y_axis(losses: list,
     plt.ylabel("Loss")
 
     return fig
+
+
+
+# scatter plots
+def get_scale(embd, max_length=0.5):
+    # returns the smallest power of 10 that is smaller than max_length * the
+    # maximals spread of a point could
+    spreads = embd.max(0) - embd.min(0)
+    spread = spreads.max()
+
+    return 10 ** (int(np.log10(spread* max_length) ))
+
+def add_scale(ax, embd):
+    scale = get_scale(embd)
+    scalebar = AnchoredSizeBar(ax.transData,
+                               scale,
+                               str(scale),
+                               loc="lower right",
+                               frameon=False)
+    ax.add_artist(scalebar)

@@ -1,11 +1,9 @@
 from setuptools import setup
 
-
-
 configuration = {
     "name": "vis_utils",
     "version": "0.1",
-    "description": "Keops utilities for visualization methods",
+    "description": "(Keops) utilities for visualization methods",
     "long_description_content_type": "text/x-rst",
     "keywords": "",
     "license": "MIT",
@@ -18,7 +16,13 @@ configuration = {
         "torch >= 1.0",
         "pykeops >= 1.4",
         "matplotlib >= 3.0",
+        "torchvision >= 0.2.2",
+
     ],
+    "extras_require": {
+        "tsne_wrapper": [
+            "opentsne >= 0.6.1",]
+    },
     "ext_modules": [],
     "cmdclass": {},
     "test_suite": "pytest",

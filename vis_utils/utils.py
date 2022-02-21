@@ -40,6 +40,24 @@ def find_ab_params(spread, min_dist):
     return params[0], params[1]
 
 
+def sort_sims_by_proximity(hsims, k=None, x=None):
+    # compute k NNs for each datapoint, if not precomputed
+    knn_graph = kNN_graph(x.astype("float"),
+                          k,
+                          metric="euclidean").cpu().numpy()
+    knn_dists = kNN_dists(x.astype("float"),
+                          k,
+                          metric="euclidean").cpu().numpy()
+
+    # slice hsims by the kNNs and stack
+    sorted_sims = []
+    sort_idx = np.take_along_axis(knn_graph, np.argsort(knn_dists, axis=1, kind="stable"), axis=1)
+    hsims_lil = hsims.tolil()
+    for i in range(len(knn_graph)):
+        sorted_sims.append(np.array(hsims_lil[np.ones(k)*i, sort_idx[i]].todense())[0])
+    sorted_sims = np.array(np.stack(sorted_sims))
+    return sorted_sims
+
 
 def corr_pdist_subsample(x, y, sample_size, seed=0, metric="euclidean"):
     """
@@ -70,7 +88,7 @@ def acc_kNN(x, y, k, metric="euclidean"):
     """
     Computes the accuracy of k nearest neighbors between x and y.
     :param x: array of positions for first dataset
-    :param y: arraoy of positions for second dataset
+    :param y: array of positions for second dataset
     :param k: number of nearest neighbors considered
     :param metric: Metric used for distances of x, must be a metric available for sklearn.metrics.pairwise_distances
     :return: Share of x's k nearest neighbors that are also y's k nearest neighbors
@@ -95,57 +113,78 @@ def kNN_graph(x, k, metric="euclidean"):
     :param metric: Metric used for distances of x, must be "euclidean" or "cosine".
     :return: array of shape (len(x), k) containing the indices of the k nearest neighbors of each datapoint
     """
-    x = torch.tensor(x).to("cuda").contiguous()
-    x_i = LazyTensor(x[:, None])
-    x_j = LazyTensor(x[None])
-    if metric == "euclidean":
-        dists = ((x_i - x_j)**2).sum(-1)
-    elif metric == "cosine":
-        scalar_prod = (x_i * x_j).sum(-1)
-        norm_x_i = (x_i**2).sum(-1).sqrt()
-        norm_x_j = (x_j**2).sum(-1).sqrt()
-        dists = 1 - scalar_prod / (norm_x_i * norm_x_j)
-    else:
-        raise NotImplementedError(f"Metric {metric} is not implemented.")
+    dists = keops_dists(x, metric)
     knn_idx = dists.argKmin(K=k+1, dim=0)[:, 1:] # use k+1 neighbours and omit first, which is just the point itself
     return knn_idx
 
-def kNN_dists(x, k):
-    """
-    Pykeops implementation for computing the euclidean distances to the k nearest neighbors
-    :param x: array dataset
-    :param k: int, number of nearest neighbors
-    :return: array of shape (len(x), k) containing the distances to the k nearest neighbors for each datapoint
-    """
+def keops_dists(x, metric):
     x = torch.tensor(x).to("cuda").contiguous()
+    if metric == "correlation":
+        # mean center so that we can then do the same thing as for cosine
+        x -= x.mean(axis=-1, keepdims=True)
+
     x_i = LazyTensor(x[:, None])
     x_j = LazyTensor(x[None])
-    knn_dists = ((x_i - x_j) ** 2).sum(-1).Kmin(K=k + 1, dim=0)[:, 1:].sqrt()  # use k+1 neighbours and omit first, which is just the point
+    if metric == "euclidean":
+        dists = ((x_i - x_j) ** 2).sum(-1)
+    elif metric == "cosine" or metric == "correlation":
+        scalar_prod = (x_i * x_j).sum(-1)
+        norm_x_i = (x_i ** 2).sum(-1).sqrt()
+        norm_x_j = (x_j ** 2).sum(-1).sqrt()
+        dists = 1 - scalar_prod / (norm_x_i * norm_x_j)
+    else:
+        raise NotImplementedError(f"Metric {metric} is not implemented.")
+    return dists
+
+def kNN_dists(x, k, metric="euclidean"):
+    """
+    Pykeops implementation for computing the distances to the k nearest neighbors
+    :param x: array dataset
+    :param k: int, number of nearest neighbors
+    :param metric: str, specifies which distance to use. Must be one of "euclidean", "cosine" or "correlation".
+    :return: array of shape (len(x), k) containing the distances to the k nearest neighbors for each datapoint
+    """
+    dists = keops_dists(x, metric)
+    knn_dists = dists.Kmin(K=k + 1, dim=0)[:, 1:] # use k+1 neighbours and omit first, which is just the point
+
+    if metric == "euclidean":
+        knn_dists = knn_dists.sqrt()  # take the root after excluding zeros to avoid problems with backward
     return knn_dists
 
 
-def compute_normalization(x, sim_func=None, no_diag=True, a=None, b=None):
+def compute_normalization(x, sim_func="cauchy", no_diag=True, a=1.0, b=1.0, eps=float(np.finfo(float).eps)):
     """
-    Pykeops implementation for computing #TODO update description to include a, b
+    Pykeops implementation for computing #TODO update description to include a, b, eps
     :param x: dataset array
-    :param sim_func: similarity function
+    :param sim_func: string name of similarity function. Must be either 'cauchy' or 'inv_sq'
     :param no_diag: If None the self similarities are included. Otherwise should
      be function with two arguments for the embeddings for which the similarities are computed
     """
     x = x.astype(np.float32)
-    if a is not None and b is not None:
-        a = a.astype(np.float32)
-        b = b.astype(np.float32)
+    #a = a.astype(np.float32)
+    #b = b.astype(np.float32)
+
+    if sim_func == "cauchy":
         sim_func = partial(compute_low_dim_psim_keops_embd, a=a, b=b)
+    elif sim_func == "inv_sq":
+        sim_func = partial(compute_inv_square_psim_keops_embd, a=a, b=b, eps=eps)
+    else:
+        print(f"sim_func must be either 'cauchy' or 'inv_sq' but was {sim_func}.")
 
     sims = sim_func(x)
-    total_sim = sims.sum(1).sum(0)
 
     if no_diag:
+        sims = sims * ( 1.0 - keops_identity(len(x)) )
+        """
+        old version less numerically stable, but perhaps slightly faster
         # cancel similarities on the diagonal
         sim_func_diag = partial(compute_low_dim_sims, a=a, b=b)
         diag_sim = sim_func_diag(x, x).sum()
         total_sim -= diag_sim
+        """
+
+    total_sim = sims.sum(1).sum(0)
+
     return total_sim
 
 
@@ -246,6 +285,7 @@ def low_dim_sim_dist(x, a, b, squared=False):
         return 1.0 / (1.0 + a * x ** (2.0 * b))
     return 1.0 / (1.0 + a * x ** b)
 
+# todo: rename this to cauchy_sim_dist
 def low_dim_sim_keops_dist(x, a, b, squared=False):
     """
     Smooth function from distances to low-dimensional simiarlity. Compatible with keops
@@ -258,6 +298,12 @@ def low_dim_sim_keops_dist(x, a, b, squared=False):
     if not squared:
         return 1.0 / (1.0 + a * x ** (2.0 * b))
     return 1.0 / (1.0 + a * x ** b)
+
+def inv_square_sim_dist(d, a=1.0, b=1.0, squared=False, eps=1e-4):
+    if not squared:
+        return 1.0 / (a * d**(2*b) + eps) #**2) # todo: maybe lose the square
+    return 1.0 / (a * d**b + eps) # **2)
+
 
 def compute_low_dim_psim_keops_embd(embedding, a, b):
     """
@@ -277,6 +323,27 @@ def compute_low_dim_psim_keops_embd(embedding, a, b):
     b = LazyTensor(torch.tensor(b, device="cuda", dtype=torch.float))
     sq_dists = ((lazy_embd_i-lazy_embd_j) ** 2).sum(-1)
     return low_dim_sim_keops_dist(sq_dists, a, b, squared=True)
+
+#todo: merge this function and the one above by selecting the sim function.
+def compute_inv_square_psim_keops_embd(embedding, a, b, eps=1e-4):
+    """
+    Computes low-dimensional pairwise inverse square similarites from embeddings via keops.
+    :param embedding: np.array embedding coordinates
+    :param a: float shape parameter a
+    :param b: float shape parameter b
+    :param eps: float small number of numerical stability
+    :return: keops.LazyTensor low-dimensional similarities
+    """
+    lazy_embd_i = LazyTensor(torch.tensor(embedding[:, None, :],
+                                          device="cuda",
+                                          dtype=torch.float))
+    lazy_embd_j = LazyTensor(torch.tensor(embedding[None],
+                                          device="cuda",
+                                          dtype=torch.float))
+    a = LazyTensor(torch.tensor(a, device="cuda", dtype=torch.float))
+    b = LazyTensor(torch.tensor(b, device="cuda", dtype=torch.float))
+    sq_dists = ((lazy_embd_i-lazy_embd_j) ** 2).sum(-1)
+    return inv_square_sim_dist(sq_dists, a, b, squared=True, eps=eps)
 
 def true_sim(x, min_dist, spread):
     return np.ones_like(x) * (x <= min_dist) + np.exp(-(x - min_dist) / spread) * (x > min_dist)
@@ -298,7 +365,7 @@ def compute_low_dim_psims(embedding, a, b):
     return low_dim_sim_dist(squared_dists, a, b, squared=True)
 
 
-def compute_low_dim_sims(embedding1, embedding2, a, b):
+def compute_low_dim_sims(embedding1, embedding2, a=1.0, b=1.0, sim_func="cauchy", eps=1e-4):
     """
     Computes low-dimensional similarites between two sets of embeddings.
     :param embedding1: np.array Coordinates of first set of embeddings
@@ -309,7 +376,12 @@ def compute_low_dim_sims(embedding1, embedding2, a, b):
     """
     assert embedding1.shape == embedding2.shape
     squared_dists = ((embedding1 - embedding2) ** 2).sum(-1)
-    return low_dim_sim_dist(squared_dists, a, b, squared=True)
+    if sim_func == "cauchy":
+        return low_dim_sim_dist(squared_dists, a, b, squared=True)
+    elif sim_func == "inv_sq":
+        return inv_square_sim_dist(squared_dists, a, b, squared=True, eps=eps)
+
+
 
 
 
@@ -320,6 +392,102 @@ def my_log(x, eps=1e-4):
         Safe version of log
     """
     return np.log(np.minimum(x + eps, 1.0))
+
+
+
+# get keops identity matrix
+def keops_identity(n):
+    x = torch.arange(n, dtype=torch.float, device="cuda")
+
+    x_i = LazyTensor(x[:, None], axis=0)
+    x_j = LazyTensor(x[:, None], axis=1)
+
+    id_mat  = (0.5-(x_i-x_j).abs()).step()
+    return id_mat
+
+# NCE loss function
+def NCE_loss_keops(high_sim,
+                   embedding,
+                   m,
+                   Z,
+                   a,
+                   b,
+                   noise_log_arg=True,
+                   eps=1e-4):
+    """
+    NCVis' original loss function, keops implementation
+    :param high_sim: scipy.sparse.coo_matrix non-normalized high-dimensional similarities
+    :param embedding: np.array Coordinates of embeddings
+    :param m: int, number of noise samples per data sample
+    :param Z: float, normalisation constant
+    :param a: float shape parameter a
+    :param b: float shape parameter b
+    :param eps: float Small epsilon value for log
+    :return: tuple of floats, attractive and repulsive loss
+    """
+
+    heads = high_sim.row
+    tails = high_sim.col
+
+    mass_graph = high_sim.sum()
+    degrees = np.squeeze(np.array(high_sim.sum(1)))
+
+    noise_prob_pos_edges = degrees[heads] / ((len(embedding)-1) * mass_graph)
+
+    degrees_i = LazyTensor(torch.tensor(degrees[:, None],
+                                          device="cuda",
+                                          dtype=torch.float),
+                           axis=0)
+    ones_j = LazyTensor(torch.ones(len(embedding),
+                                   device="cuda",
+                                   dtype=torch.float)[:, None],
+                        axis=1)
+
+    mass_graph_pt = torch.tensor(mass_graph,
+                                 device="cuda",
+                                 dtype=torch.float)
+
+    # compute noise probability, which is zero on diagonal
+    noise_prob = degrees_i * ones_j / ((len(embedding)-1) * mass_graph_pt)
+    noise_prob = noise_prob * (1.0 - keops_identity(len(embedding)))
+
+    # compute low dimensional similarities from embeddings
+    sq_dist_pos_edges = ((embedding[heads] - embedding[tails]) ** 2).sum(-1)
+    low_sim_pos_edges = low_dim_sim_keops_dist(sq_dist_pos_edges, a, b,
+                                               squared=True) / Z
+
+    Z_pt = torch.tensor(Z, device="cuda", dtype=torch.float)
+    low_sim = compute_low_dim_psim_keops_embd(embedding, a, b) / Z_pt
+
+    if noise_log_arg:
+        log_arg_a = low_sim_pos_edges/(low_sim_pos_edges
+                                       + m * noise_prob_pos_edges)
+    else:
+        log_arg_a = low_sim_pos_edges / (low_sim_pos_edges + m)
+
+    loss_a = (high_sim.data *  my_log(log_arg_a)).sum() / mass_graph
+
+    if noise_log_arg:
+        log_arg_r = robust_log_arg_keops(m*noise_prob / (low_sim + m*noise_prob),
+                                         eps)
+    else:
+        log_arg_r = robust_log_arg_keops(m / (low_sim + m), eps)
+
+    loss_r = (m * noise_prob * log_arg_r.log()).sum(1).sum()
+
+    return -loss_a, float(-loss_r)
+
+def robust_log_arg_keops(lt, eps):
+    """
+    Computes a robust argument for logarithm for a pykeops object:
+    min(lt + eps, 1)
+    :param lt: LazyTensor to which a robust log shall be applied
+    :param eps: float Small epsilon value for log
+    :return: pykeops object to insert safely into log
+    """
+    log_arg = 1 - (1 - lt - eps).relu()
+    return log_arg
+
 
 # expects dense np.arrays
 def reproducing_loss(high_sim, low_sim):
@@ -376,13 +544,79 @@ def BCE_loss(high_sim_a, high_sim_r, low_sim):
                                   f"and {type(low_sim)}")
     return -loss_a, -loss_r
 
+def joint_support(p1, p2):
+    # infer mask that is non-zero whenever p1 or p2 are non-zero, p1, p2 coo matrix
+    mask1 = p1.copy()
+    mask1.data = np.ones_like(mask1.data)
+    mask2 = p2.copy()
+    mask2.data = np.ones_like(mask2.data)
+
+    mask = mask1.maximum(mask2).tocoo()
+
+    return mask
+
+def pythagorean_defect(p1, p2, p3=None, embedding=None, a=1.0, b=1.0, eps=np.finfo(float).eps):
+    assert p3 is not None or embedding is not None
+    # infer mask that is non-zero whenever p1 or p2 are non-zero
+    mask = joint_support(p1, p2)
+
+    p1 = p1 / p1.sum()
+    p2 = p2 / p2.sum()
+
+    if p3 is not None:
+        p3 = p3 / p3.sum()
+        mask = joint_support(mask, p3)
+
+    rows = mask.row
+    cols = mask.col
+
+    # transform to lil to enable indexing
+    p1_lil = p1.tolil()
+    p2_lil = p2.tolil()
+
+    diff = p1_lil[rows, cols]- p2_lil[rows, cols]
+    diff = diff.toarray()[0]
+
+    if p3 is not None:
+        p3_lil = p3.tolil()
+        log_diff = my_log(p3_lil[rows, cols].toarray()[0], eps=eps) - my_log(p2_lil[rows, cols].toarray()[0], eps=eps)
+    else:
+        embd_sims = compute_low_dim_sims(embedding[rows],
+                                         embedding[cols],
+                                         a=a,
+                                         b=b)
+
+        log_diff = my_log(embd_sims, eps=eps) - my_log(p2_lil[rows, cols].toarray()[0], eps=eps)
+
+    return np.dot(diff, log_diff)
+
+def KL_divergence_sparse(p1,
+                          p2,
+                          eps=np.finfo("float").eps):
+    mask = joint_support(p1, p2)
+    rows = mask.row
+    cols = mask.col
+
+    p1_norm = p1 / p1.sum()
+    p2_norm = p2 / p2.sum()
+
+    # transform to lil to enable indexing
+    p1_lil = p1_norm.tolil()
+    p2_lil = p2_norm.tolil()
+
+    neg_entropy = (p1_norm.data * my_log(p1_norm.data, eps=eps)).sum()
+    cross_entropy = - (p1_lil[rows, cols].toarray()[0]
+                       * my_log(p2_lil[rows, cols].toarray()[0], eps=eps)).sum()
+    return neg_entropy + cross_entropy
+
 # keops implementations:
 def KL_divergence(high_sim,
-                  a,
-                  b,
                   embedding,
-                  eps=1e-12,
-                  norm_over_pos=True):
+                  a=1.0,
+                  b=1.0,
+                  sim_func="cauchy",
+                  eps=float(np.finfo(float).eps),
+                  norm_over_pos=False):
     """
     Computes the KL divergence between the high-dimensional p and low-dimensional
     similarities q. The latter are inferred from the embedding.
@@ -400,16 +634,32 @@ def KL_divergence(high_sim,
 
     # compute low dimensional simiarities on the edges with positive p_ij
     sq_dist_pos_edges = ((embedding[heads]-embedding[tails])**2).sum(-1)
-    low_sim_pos_edges = low_dim_sim_keops_dist(sq_dist_pos_edges,
-                                               a,
-                                               b,
-                                               squared=True)
+
+    if sim_func=="cauchy":
+        low_sim_pos_edges = low_dim_sim_keops_dist(sq_dist_pos_edges,
+                                                   a,
+                                                   b,
+                                                   squared=True)
+    elif sim_func=="inv_sq":
+        low_sim_pos_edges = inv_square_sim_dist(sq_dist_pos_edges,
+                                                a=a,
+                                                b=b,
+                                                squared=True,
+                                                eps=eps)
+    else:
+        print(f"'sim_func' must be one of 'cauchy' or 'inv_sq' but was {sim_func}.")
+        low_sim_pos_edges = 0
+
     if norm_over_pos:
         low_sim_pos_edges_norm = low_sim_pos_edges / low_sim_pos_edges.sum()
     else:
-        total_low_sim = compute_low_dim_psim_keops_embd(embedding,
-                                                        a,
-                                                        b).sum(1).cpu().numpy().sum()
+        total_low_sim = compute_normalization(embedding,
+                                              a=a,
+                                              b=b,
+                                              sim_func=sim_func,
+                                              no_diag=True,
+                                              eps=eps).cpu().numpy()
+
         low_sim_pos_edges_norm = low_sim_pos_edges / total_low_sim
 
 
@@ -445,7 +695,8 @@ def reproducing_loss_keops(high_sim: scipy.sparse.coo_matrix,
 
     loss_a = (high_sim.data * my_log(low_sim_pos_edges)).sum()
 
-    inv_low_sim = 1 - (low_sim - eps).relu()  # pykeops compatible version of min(1-low_sim+eps, 1)
+    #inv_low_sim = 1 - (low_sim - eps).relu()  # pykeops compatible version of min(1-low_sim+eps, 1)
+    inv_low_sim = robust_log_arg_keops(low_sim, eps)
     # for repulsive term compute loss with keops and all high_sims = 1 and substract the sparse positive high_sims
     loss_r = (inv_low_sim).log().sum(1).sum()
     loss_r -= ((1 - high_sim.data) * my_log(1 - low_sim_pos_edges)).sum()
@@ -534,7 +785,7 @@ def get_UMAP_push_weight(high_sim, negative_sample_rate, push_tail=False):
         raise NotImplementedError
 
 
-def get_target_sim(high_sim, negative_sample_rate=5):
+def get_target_sim(high_sim, negative_sample_rate=5, sim_func="cauchy"):
     """
     Computes the true target similarities of UMAP
     :param high_sim: np.array or scipy.sparse.coo_matrix high-dimensional similarities
@@ -542,13 +793,29 @@ def get_target_sim(high_sim, negative_sample_rate=5):
     :return: np.array or scipy.sparse.coo_matrix UMAP's true target similarities
     """
     push_weight, _ = get_UMAP_push_weight(high_sim, negative_sample_rate, push_tail=True)
-    if isinstance(high_sim, np.ndarray):
-        return high_sim / (high_sim + push_weight)
-    elif isinstance(high_sim, scipy.sparse.coo_matrix):
-        return scipy.sparse.coo_matrix((high_sim.data / (high_sim.data + push_weight.data),
-                                        (high_sim.row, high_sim.col)), shape=high_sim.shape)
+
+    if sim_func == "cauchy":
+        if isinstance(high_sim, np.ndarray):
+            return high_sim / (high_sim + push_weight)
+        elif isinstance(high_sim, scipy.sparse.coo_matrix):
+            return scipy.sparse.coo_matrix((high_sim.data / (high_sim.data + push_weight.data),
+                                            (high_sim.row, high_sim.col)),
+                                           shape=high_sim.shape)
+        else:
+            print(type(high_sim))
+            raise NotImplementedError
+    elif sim_func == "inv_sq":
+        if isinstance(high_sim, np.ndarray):
+            return high_sim /  push_weight
+        elif isinstance(high_sim, scipy.sparse.coo_matrix):
+            return scipy.sparse.coo_matrix((high_sim.data / push_weight.data,
+                                            (high_sim.row, high_sim.col)),
+                                           shape=high_sim.shape)
+        else:
+            print(type(high_sim))
+            raise NotImplementedError
     else:
-        print(type(high_sim))
+        print(sim_func)
         raise NotImplementedError
 
 
