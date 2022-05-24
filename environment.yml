@@ -18,3 +18,5 @@ dependencies:
   - setuptools=52.0.0
   - torchvision=0.8.2
   - yaml=0.2.5
+  - pip:
+      - pykeops==1.5
