@@ -5,11 +5,12 @@ import torchvision
 import scipy.sparse
 from .utils import kNN_graph
 from sklearn.decomposition import PCA
+import urllib.request
+import zipfile
+from .treutlein_preprocess import preprocess
 
 # from https://github.com/stat-ml/ncvis
 # use their get_pendigits.py and download_pendigits.sh to obtain the dataset
-
-
 def load_pendigits(root_path):
     files = ["pendigits/optdigits.tes",
              "pendigits/optdigits.tra"]
@@ -97,8 +98,41 @@ def load_cifar10(root_path):
 
 def load_human(root_path):
     root_path = os.path.join(root_path, "human-409b2")
-    x = np.load(os.path.join(root_path, "human-409b2.data.npy"))
-    y = np.load(os.path.join(root_path, "human-409b2.labels.npy"))
+    try:
+        x = np.load(os.path.join(root_path, "human-409b2.data.npy"))
+        y = np.load(os.path.join(root_path, "human-409b2.labels.npy"))
+    except FileNotFoundError:
+        urls = ["https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.1.zip",
+                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.2.zip",
+                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.3.zip",
+                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.4.zip",
+                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.5.zip",
+                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.6.zip",
+                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.7.zip",]
+        print("Downloading data")
+        for url in urls:
+            filename =  os.path.join(root_path, url.split("/")[-1])
+            urllib.request.urlretrieve(url, filename)
+            with zipfile.ZipFile(filename, "r") as zip_ref:
+                zip_ref.extractall(os.path.join(root_path, "unzipped_files"))
+
+        print("Preprocessing data")
+        metafile = os.path.join(root_path,
+                                "unzipped_files",
+                                "metadata_human_cells.tsv")
+        countfile = os.path.join(root_path,
+                                 "unzipped_files",
+                                 "human_cell_counts_consensus.mtx")
+        line = "409b2"
+        X, stage = preprocess(metafile, countfile, line)
+
+        outputfile = "human-409b2"
+
+        np.save(os.path.join(root_path, outputfile + ".data.npy"), X)
+        np.save(os.path.join(root_path, outputfile + ".labels.npy"), stage)
+        x = X
+        y = stage
+        print("Done")
     return x, y
 
 # for translating labels to colors and time points
@@ -163,8 +197,6 @@ def load_dataset(root_path, dataset, k=15):
     knn_file_name = os.path.join(root_path,
                                  dataset,
                                  f"sknn_graph_k_{k}_metric_euclidean.npz")
-
-
 
     try:
         sknn_graph = scipy.sparse.load_npz(knn_file_name)
