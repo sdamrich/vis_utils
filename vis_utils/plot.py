@@ -3,11 +3,9 @@ import matplotlib.pyplot as plt
 import pykeops
 import matplotlib
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+import matplotlib.animation as animation
 
 from .utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_low_dim_sims, keops_identity
-
-
-
 
 # Contains functionality for convenient plotting of historgrams and loss functions
 
@@ -20,7 +18,7 @@ def hists_from_graph_embd(graph,
                      negative_sample_rate=5,
                      n_bins=100,
                      hist_range=(0,1),
-                     sim_func="cauchy", # todo: adapt the notion of target similarity
+                     sim_func="cauchy",
                      norm_embd = False
 ):
     """
@@ -356,17 +354,146 @@ def cut_y_axis(losses: list,
 # scatter plots
 def get_scale(embd, max_length=0.5):
     # returns the smallest power of 10 that is smaller than max_length * the
-    # maximals spread of a point could
+    # spread in the x direction
     spreads = embd.max(0) - embd.min(0)
     spread = spreads.max()
 
-    return 10 ** (int(np.log10(spread* max_length) ))
+    return 10 ** (int(np.log10(spread * max_length)))
 
 def add_scale(ax, embd):
+    """
+    Adds a scale bar
+    """
     scale = get_scale(embd)
+    embd_w, embd_h = embd.max(0)- embd.min(0)
+    height =  0.005 * embd_h
+
     scalebar = AnchoredSizeBar(ax.transData,
                                scale,
                                str(scale),
                                loc="lower right",
-                               frameon=False)
+                               size_vertical=height,
+                               #borderpad= 0.5,
+                               sep=4,
+                               frameon=False,
+                               fontproperties={"size": 20})
     ax.add_artist(scalebar)
+    return scalebar
+
+
+def plot_scatter(ax, x, y=None, title=None):
+    """
+    Produces a scatterplot for embeddings
+    :param ax: Matplotlib axes to which the scatter plot is added
+    :param x: np.array (n, 2) Embedding positions
+    :param y: np.array (n) Label informations
+    :param title: Title of the plot
+    :return: Matplotlib axes
+    """
+    ax.scatter(*x.T, c=y, s=1.0, alpha=0.5, cmap="tab10", edgecolor="none")
+    add_scale(ax, x)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    if title is not None:
+        ax.set_title(title)
+    return ax
+
+##### animations from https://github.com/berenslab/ne-spectrum/blob/1f36313046d7cb8dfae7479de670a460e37da631/jnb_msc/plot/anim/anim.py
+
+def update_plot(data, scatter, scalebar):
+    """
+    Updates a scatter plot to create a video
+    :param data: np.array (n ,2) Embedding information for next frame
+    :param scatter: Scatter object
+    :param scalebar: Scalebar object
+    :return: scatter object and scalebar
+    """
+    scale = data.max()-data.min()
+    data_scaled = (data - data.min()) / scale
+
+    scalebar_length = get_scale(data)
+    scalebar.size_bar.get_children()[0].set_width(scalebar_length / scale)
+    scalebar.txt_label.set_text(str(scalebar_length))
+
+    scatter.set_offsets(data_scaled)
+    return scatter, scalebar
+
+
+def lim(lo, hi, eps=0.025):
+    """
+    Helper function for setting axis limits
+    :param lo: float Min value
+    :param hi: float Max value
+    :param eps: float Limit values will by eps times lower and higher than the min and max value
+    :return: tuple(float, float) Limit values
+    """
+    l = abs(hi - lo)
+    return lo - l * eps, hi + l * eps
+
+
+def save_animation(data,
+                   labels,
+                   filename,
+                   cmap="tab10",
+                   s=1,
+                   alpha=0.5,
+                   lim_eps=0.025,
+                   fps=50,
+                   **kwargs):
+    """
+    Create as video from a stack of 2D embeddings.
+    :param data: np.array (t, n, 2) Stack of 2D embeddings
+    :param labels: np.array (n) Labels of the embedding
+    :param filename: str Output file name
+    :param cmap: Matplotlib color map
+    :param s: float Size of embedding points
+    :param alpha: float Transparency
+    :param lim_eps: float Excess size of the figure
+    :param fps: int Frames per second
+    :param kwargs: Additional arguments to plt.subplots
+    :return: None
+    """
+    with plt.rc_context(fname=matplotlib.matplotlib_fname()):
+        fig, ax = plt.subplots(
+            figsize=(2, 2), dpi=200, constrained_layout=True, **kwargs
+        )
+
+        init_scale = data[0].max() - data[0].min()
+        init_data = (data[0] - data[0].min()) / init_scale
+        sc = ax.scatter(
+            *init_data.T, c=labels, alpha=alpha, cmap=cmap, s=s
+        )
+        scalebar_length = get_scale(data[0])
+        scalebar = AnchoredSizeBar(ax.transData,
+                                   scalebar_length / init_scale,
+                                   str(scalebar_length),
+                                   loc="lower right",
+                                   frameon=False)
+        scalebar = ax.add_artist(scalebar)
+
+
+        ax.set_xlim(*lim(0, 1, lim_eps))
+        ax.set_ylim(*lim(0, 1, lim_eps))
+
+        ax.set_axis_off()
+        ax.set_aspect("equal")
+
+        sc_ani = animation.FuncAnimation(
+            fig,
+            update_plot,
+            frames=data[1:],
+            fargs=(sc, scalebar),
+            interval=fps,
+            blit=True,
+            init_func=lambda: [sc, scalebar],
+            save_count=len(data),
+        )
+
+        # save in transform because this is the computationally
+        # expensive operation
+        sc_ani.save(
+            str(filename),
+            fps=fps,
+            metadata={"artist": "Anonymous"},
+            savefig_kwargs={"transparent": True},
+        )
