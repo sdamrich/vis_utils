@@ -4,10 +4,19 @@ from .utils import KL_divergence, compute_normalization
 import numpy as np
 
 class Logger(Callback):
+    """
+    Computes and logs quantities of interest during an embedding optimization
+    """
     def __init__(self,
                  log_kl=True,
                  log_embds=False,
                  log_Z=True):
+        """
+        Initialization
+        :param log_kl: bool If True, log the KL divergence
+        :param log_embds: bool If True, log intermediate embeddings
+        :param log_Z: bool If True, log partition function
+        """
         super().__init__()
         self.errors = []
 
@@ -43,8 +52,11 @@ class Logger(Callback):
         return False
 
 class TSNEwrapper:
+    """
+    Wrapper to the TSNE class that add logging
+    """
     def __init__(self, log_kl=True, log_embds=True, log_Z=True, **tsne_kwargs):
-        self.logger = Logger(log_kl, log_embds)
+        self.logger = Logger(log_kl, log_embds, log_Z)
         self.tsne = TSNE(callbacks=[self.logger],
                          **tsne_kwargs)
         self.aux_data = tsne_kwargs
@@ -70,6 +82,4 @@ class TSNEwrapper:
             self.aux_data["kl_div"] = np.array(self.logger.kl_divs)
         if self.logger.log_Z:
             self.aux_data["Zs"] = np.array(self.logger.Zs)
-
-
         return embd

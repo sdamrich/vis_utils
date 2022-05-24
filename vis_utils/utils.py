@@ -118,6 +118,12 @@ def kNN_graph(x, k, metric="euclidean"):
     return knn_idx
 
 def keops_dists(x, metric):
+    """
+    Creates a keops lazytensor with the pairwise distances.
+    :param x: np.array(n, d) Data points
+    :param metric: str The metric used to compute the distance, must be one of "correlation", "euclidean" or "cosine"
+    :return: lazytensor (n, n)
+    """
     x = torch.tensor(x).to("cuda").contiguous()
     if metric == "correlation":
         # mean center so that we can then do the same thing as for cosine
@@ -154,15 +160,16 @@ def kNN_dists(x, k, metric="euclidean"):
 
 def compute_normalization(x, sim_func="cauchy", no_diag=True, a=1.0, b=1.0, eps=float(np.finfo(float).eps)):
     """
-    Pykeops implementation for computing #TODO update description to include a, b, eps
+    Pykeops implementation for computing
     :param x: dataset array
     :param sim_func: string name of similarity function. Must be either 'cauchy' or 'inv_sq'
     :param no_diag: If None the self similarities are included. Otherwise should
      be function with two arguments for the embeddings for which the similarities are computed
+    :param a: float Shape parameter of generalized Cauchy kernel
+    :param b: float Shape parameter of generalized Cauchy kernel
+    :param eps: float Epsilon for numerically stable logarithm
     """
     x = x.astype(np.float32)
-    #a = a.astype(np.float32)
-    #b = b.astype(np.float32)
 
     if sim_func == "cauchy":
         sim_func = partial(compute_low_dim_psim_keops_embd, a=a, b=b)
@@ -175,13 +182,6 @@ def compute_normalization(x, sim_func="cauchy", no_diag=True, a=1.0, b=1.0, eps=
 
     if no_diag:
         sims = sims * ( 1.0 - keops_identity(len(x)) )
-        """
-        old version less numerically stable, but perhaps slightly faster
-        # cancel similarities on the diagonal
-        sim_func_diag = partial(compute_low_dim_sims, a=a, b=b)
-        diag_sim = sim_func_diag(x, x).sum()
-        total_sim -= diag_sim
-        """
 
     total_sim = sims.sum(1).sum(0)
 
@@ -285,7 +285,6 @@ def low_dim_sim_dist(x, a, b, squared=False):
         return 1.0 / (1.0 + a * x ** (2.0 * b))
     return 1.0 / (1.0 + a * x ** b)
 
-# todo: rename this to cauchy_sim_dist
 def low_dim_sim_keops_dist(x, a, b, squared=False):
     """
     Smooth function from distances to low-dimensional simiarlity. Compatible with keops
@@ -301,8 +300,8 @@ def low_dim_sim_keops_dist(x, a, b, squared=False):
 
 def inv_square_sim_dist(d, a=1.0, b=1.0, squared=False, eps=1e-4):
     if not squared:
-        return 1.0 / (a * d**(2*b) + eps) #**2) # todo: maybe lose the square
-    return 1.0 / (a * d**b + eps) # **2)
+        return 1.0 / (a * d**(2*b) + eps)
+    return 1.0 / (a * d**b + eps)
 
 
 def compute_low_dim_psim_keops_embd(embedding, a, b):
@@ -324,7 +323,6 @@ def compute_low_dim_psim_keops_embd(embedding, a, b):
     sq_dists = ((lazy_embd_i-lazy_embd_j) ** 2).sum(-1)
     return low_dim_sim_keops_dist(sq_dists, a, b, squared=True)
 
-#todo: merge this function and the one above by selecting the sim function.
 def compute_inv_square_psim_keops_embd(embedding, a, b, eps=1e-4):
     """
     Computes low-dimensional pairwise inverse square similarites from embeddings via keops.
@@ -404,6 +402,7 @@ def keops_identity(n):
 
     id_mat  = (0.5-(x_i-x_j).abs()).step()
     return id_mat
+
 
 # NCE loss function
 def NCE_loss_keops(high_sim,
@@ -556,6 +555,17 @@ def joint_support(p1, p2):
     return mask
 
 def pythagorean_defect(p1, p2, p3=None, embedding=None, a=1.0, b=1.0, eps=np.finfo(float).eps):
+    """
+    Computes the pythagorean defect between KL divergences, see Appendix A of https://epubs.siam.org/doi/10.1137/1.9781611972740.22
+    :param p1: sparse matrix holding a probability distribution
+    :param p2: sparse matrix holding a probability distribution
+    :param p3: sparse matrix holding a probability distribution
+    :param embedding: np.array(n,d) If p3 is None this is used to compute p3 as distribution proportional to the generalized Cauchy kernel of the pairwise embedding distances.
+    :param a: float Shape parameter of generalized Cauchy kernel
+    :param b: float Shape parameter of generalized Cauchy kernel
+    :param eps: float epsilon for numerical stability
+    :return: float Pythagorean defect for the triple p1, p2, p3
+    """
     assert p3 is not None or embedding is not None
     # infer mask that is non-zero whenever p1 or p2 are non-zero
     mask = joint_support(p1, p2)
@@ -593,6 +603,13 @@ def pythagorean_defect(p1, p2, p3=None, embedding=None, a=1.0, b=1.0, eps=np.fin
 def KL_divergence_sparse(p1,
                           p2,
                           eps=np.finfo("float").eps):
+    """
+    Compute the KL divergence between two distributions given as sparse matrices.
+    :param p1: sparse matrix Holds a probability distribution
+    :param p2: sparse matrix Holds a probability distribution
+    :param eps: float Epsilon for numerical stability of log
+    :return: float KL divergece between p1 and p2
+    """
     mask = joint_support(p1, p2)
     rows = mask.row
     cols = mask.col
