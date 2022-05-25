@@ -16,6 +16,8 @@
 #
 # Download supplementary informationfrom the Nature paper https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-019-1654-9/MediaObjects/41586_2019_1654_MOESM3_ESM.zip, extract `Supplementary_Table_5.txt` and rename it into `metadata_chimp_cells_suppl.tsv`. The metadata file on arrayexpress seems to be wrong. I wrote to the authors to clarify.
 
+# from https://github.com/berenslab/ne-spectrum/blob/master/static/treutlein-preprocess.py
+
 import numpy as np
 import pandas as pd
 import matplotlib
