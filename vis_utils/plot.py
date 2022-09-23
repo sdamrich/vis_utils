@@ -381,7 +381,7 @@ def add_scale(ax, embd):
     return scalebar
 
 
-def plot_scatter(ax, x, y=None, title=None):
+def plot_scatter(ax, x, y=None, title=None, cmap="tab10", s=1.0, alpha=0.5):
     """
     Produces a scatterplot for embeddings
     :param ax: Matplotlib axes to which the scatter plot is added
@@ -390,7 +390,7 @@ def plot_scatter(ax, x, y=None, title=None):
     :param title: Title of the plot
     :return: Matplotlib axes
     """
-    ax.scatter(*x.T, c=y, s=1.0, alpha=0.5, cmap="tab10", edgecolor="none")
+    ax.scatter(*x.T, c=y, s=s, alpha=alpha, cmap=cmap, edgecolor="none")
     add_scale(ax, x)
     ax.set_aspect("equal")
     ax.axis("off")
