@@ -7,7 +7,12 @@ from .utils import kNN_graph
 from sklearn.decomposition import PCA
 import urllib.request
 import zipfile
-from .treutlein_preprocess import preprocess
+from .treutlein_preprocess import preprocess as treut_preprocess
+from .zfish_preprocess import preprocess as zfish_preprocess
+
+import urllib.request
+import tarfile
+
 
 # from https://github.com/stat-ml/ncvis
 # use their get_pendigits.py and download_pendigits.sh to obtain the dataset
@@ -46,6 +51,8 @@ def load_mnist(root_path):
 
 def load_small_mnist(root_path, seed=0, size=6000):
     root_path = os.path.join(root_path, f"mnist_seed_{seed}_size_{size}")
+    if not os.path.exists(root_path):
+        os.mkdir(root_path)
 
     try:
         x_small = np.load(os.path.join(root_path, "data.npy"))
@@ -80,9 +87,38 @@ def load_small_mnist(root_path, seed=0, size=6000):
                 y_small)
     return x_small, y_small
 
+def imbalance_dataset(x, y, props, seed=0):
+    classes, counts = np.unique(y, return_counts= True)
+    assert len(props) == len(np.unique(y))
+
+    classes_idx = [ np.where(y == cls)[0] for cls in classes]
+
+    new_counts = [int(prop * len(class_idx))
+                        for prop, class_idx in zip(props, classes_idx) ]
+
+    np.random.seed(seed)
+    new_classes_idx = []
+    for i in range(len(classes)):
+        subsample_idx = np.random.permutation(counts[i])[:new_counts[i]]
+        new_classes_idx.append(classes_idx[i][subsample_idx])
+    full_subsample_idx = np.concatenate(new_classes_idx)
+
+    return x[full_subsample_idx], y[full_subsample_idx]
+
+
+
+
+
+def load_imba_mnist(root_path, props, seed=0):
+    x, y = load_mnist(root_path)
+    return imbalance_dataset(x, y, props, seed)
+
+
 
 def load_cifar10(root_path):
     root_path = os.path.join(root_path, "cifar10")
+    if not os.path.exists(root_path):
+        os.mkdir(root_path)
     cifar10_train = torchvision.datasets.CIFAR10(root=root_path, train=True,
                                              download=True, transform=None)
 
@@ -98,6 +134,9 @@ def load_cifar10(root_path):
 
 def load_human(root_path):
     root_path = os.path.join(root_path, "human-409b2")
+    if not os.path.exists(root_path):
+        os.mkdir(root_path)
+
     try:
         x = np.load(os.path.join(root_path, "human-409b2.data.npy"))
         y = np.load(os.path.join(root_path, "human-409b2.labels.npy"))
@@ -124,7 +163,7 @@ def load_human(root_path):
                                  "unzipped_files",
                                  "human_cell_counts_consensus.mtx")
         line = "409b2"
-        X, stage = preprocess(metafile, countfile, line)
+        X, stage = treut_preprocess(metafile, countfile, line)
 
         outputfile = "human-409b2"
 
@@ -134,6 +173,8 @@ def load_human(root_path):
         y = stage
         print("Done")
     return x, y
+
+
 
 # for translating labels to colors and time points
 label_to_color = {
@@ -161,9 +202,126 @@ time_to_color = {
 color_to_time = {v: k for k,v in time_to_color.items()}
 label_to_time = {k: color_to_time[label_to_color[k]] for k in label_to_color.keys()}
 
+
+def load_zebrafish(root_path):
+    root_path = os.path.join(root_path, "zebrafish")
+    if not os.path.exists(root_path):
+        os.mkdir(root_path)
+    try:
+        x = np.load(os.path.join(root_path, "zfish.data.npy"))
+        y = np.load(os.path.join(root_path, "zfish.labels.npy"))
+    except FileNotFoundError:
+        # download
+        print("Downloading zebrafish data...")
+        url = "https://kleintools.hms.harvard.edu/paper_websites/wagner_zebrafish_timecourse2018/WagnerScience2018.h5ad"
+        file_name = "WagnerScience2018.h5ad"
+        file_path = os.path.join(root_path, file_name)
+        urllib.request.urlretrieve(url, file_path)
+
+        print("Preprocessing zebrafish data...")
+        # preprocess
+        X, stage, alt_c = zfish_preprocess(file_path)
+        np.save(os.path.join(root_path, "zfish.data.npy"), X)
+        np.save(os.path.join(root_path, "zfish.labels.npy"), stage)
+        np.save(os.path.join(root_path, "zfish.altlabels.npy"), alt_c)
+        print("...done.")
+
+        x = X
+        y = stage
+    return x, y
+
+zebra_label_to_color = {
+    "4hpf": "navy",
+    "6hpf": "royalblue",
+    "8hpf": "skyblue",
+    "10hpf": "lightgreen",
+    "14hpf": "gold",
+    "18hpf": "tomato",
+    "24hpf": "firebrick",
+    "unused": "maroon",
+}
+
+zebra_color_to_label = {val: key for key, val in zebra_label_to_color.items()}
+
+def load_c_elegans(root_path):
+    data_dir = os.path.join(root_path, "c_elegans")
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+    if not os.path.exists(os.path.join(data_dir,
+                                       "packer_c-elegans",
+                                       "c-elegans_qc_final.txt")):
+        # download the C. elegans data
+        url = "http://cb.csail.mit.edu/cb/densvis/datasets/packer_c-elegans_data.tar.gz"
+        file_name = os.path.join(data_dir, "packer_c-elegans_data.tar.gz")
+
+        urllib.request.urlretrieve(url, file_name)
+
+        # extract the data
+        tar = tarfile.open(file_name, "r:gz")
+        tar.extractall(path=data_dir)
+        tar.close()
+
+
+    x = pd.read_csv(os.path.join(data_dir,
+                                 "packer_c-elegans",
+                                 "c-elegans_qc_final.txt"),
+                         sep='\t',
+                         header=None)
+    x = np.array(x)
+    meta = pd.read_csv(os.path.join(data_dir,
+                                    "packer_c-elegans",
+                                    "c-elegans_qc_final_metadata.txt"),
+                       sep=',',
+                       header=0)
+
+    cell_types = meta["cell.type"].to_numpy().astype(str)
+
+    y = np.zeros(len(cell_types)).astype(int)
+    #name_to_label = {}
+    for i, phase in enumerate(np.unique(cell_types)):
+        #name_to_label[phase] = i
+        y[cell_types == phase] = i
+    return x, y
+
+def load_k49(root_dataset):
+    data_dir = os.path.join(root_dataset, "k49")
+
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+
+    if not os.path.exists(os.path.join(data_dir, "k49-train-imgs.npz")):
+        urls = ["http://codh.rois.ac.jp/kmnist/dataset/k49/k49-train-imgs.npz",
+                "http://codh.rois.ac.jp/kmnist/dataset/k49/k49-train-labels.npz",
+                "http://codh.rois.ac.jp/kmnist/dataset/k49/k49-test-imgs.npz",
+                "http://codh.rois.ac.jp/kmnist/dataset/k49/k49-test-labels.npz"]
+        for url in urls:
+            name = url.split("/")[-1]
+            file_name = os.path.join(data_dir, name)
+            urllib.request.urlretrieve(url, file_name)
+
+    with np.load(os.path.join(data_dir, "k49-train-imgs.npz")) as data:
+        x_train = data["arr_0"]
+    with np.load(os.path.join(data_dir, "k49-test-imgs.npz")) as data:
+        x_test = data["arr_0"]
+    x = np.concatenate([x_train, x_test])
+    x = x.reshape(len(x), -1)
+
+    with np.load(os.path.join(data_dir, "k49-train-labels.npz")) as data:
+        y_train = data["arr_0"]
+
+    with np.load(os.path.join(data_dir, "k49-test-labels.npz")) as data:
+        y_test = data["arr_0"]
+    y = np.concatenate([y_train, y_test])
+
+    return x, y
+
+
+
 # complete loader:
 def load_dataset(root_path, dataset, k=15):
     # load dataset
+    if not os.path.exists(os.path.join(root_path, dataset)):
+        os.mkdir(os.path.join(root_path, dataset))
     if dataset == "pendigits":
         x, y = load_pendigits(root_path)
 
@@ -177,12 +335,35 @@ def load_dataset(root_path, dataset, k=15):
         ind_size = l.index("size")
         size = int(l[ind_size + 1])
         x, y = load_small_mnist(root_path, seed, size)
+
+    elif dataset.startswith("imba_mnist"):
+        l = dataset.split("_")
+        ind_seed = l.index("seed")
+        seed = int(l[ind_seed + 1])
+        mode = l[2]
+        if mode == "lin":
+            x, y = load_imba_mnist(root_path,
+                                   props = 1.0 - np.arange(10) / 10,
+                                   seed=seed)
+        elif mode == "odd":
+            x, y = load_imba_mnist(root_path,
+                                   props = 5*[1.0, 0.1],
+                                   seed = seed)
+        else:
+            raise NotImplementedError(f"Subsampling mode {mode} is not implemented.")
     elif dataset == "cifar10":
         x, y = load_cifar10(root_path)
     elif dataset == "human-409b2":
         x, y = load_human(root_path)
+    elif dataset == "zebrafish":
+        x, y = load_zebrafish(root_path)
+    elif dataset == "c_elegans":
+        x, y = load_c_elegans(root_path)
+    elif dataset == "k49":
+        x, y = load_k49(root_path)
     else:
         raise NotImplementedError
+
 
     # get pca
     # load / compute and save 2D PCA for initialisation
@@ -202,7 +383,7 @@ def load_dataset(root_path, dataset, k=15):
         sknn_graph = scipy.sparse.load_npz(knn_file_name)
     except IOError:
         x_for_knn = x
-        if dataset.startswith("mnist"):
+        if dataset.startswith("mnist") or dataset == "k49" or dataset == "cifar10":
             try:
                 pca50 = np.load(os.path.join(root_path, dataset, "pca50.npy"))
             except FileNotFoundError:
