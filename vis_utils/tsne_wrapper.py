@@ -2,6 +2,7 @@ from openTSNE import TSNE
 from openTSNE.callbacks import Callback
 from .utils import KL_divergence, compute_normalization
 import numpy as np
+import time
 
 class Logger(Callback):
     """
@@ -10,7 +11,8 @@ class Logger(Callback):
     def __init__(self,
                  log_kl=True,
                  log_embds=False,
-                 log_Z=True):
+                 log_Z=True,
+                 log_time=True):
         """
         Initialization
         :param log_kl: bool If True, log the KL divergence
@@ -27,6 +29,8 @@ class Logger(Callback):
         self.log_embds = log_embds
         if self.log_embds:
             self.embeddings = []
+
+        self.log_time = log_time
 
         self.log_Z = log_Z
         if self.log_Z:
@@ -55,8 +59,8 @@ class TSNEwrapper:
     """
     Wrapper to the TSNE class that add logging
     """
-    def __init__(self, log_kl=True, log_embds=True, log_Z=True, **tsne_kwargs):
-        self.logger = Logger(log_kl, log_embds, log_Z)
+    def __init__(self, log_kl=True, log_embds=True, log_Z=True, log_time=True, **tsne_kwargs):
+        self.logger = Logger(log_kl, log_embds, log_Z, log_time)
         self.tsne = TSNE(callbacks=[self.logger],
                          **tsne_kwargs)
         self.aux_data = tsne_kwargs
@@ -64,6 +68,8 @@ class TSNEwrapper:
 
     def fit_transform(self, X=None, affinities=None, initialization=None):
         # compute tsne
+        if self.logger.log_time:
+            start_time = time.time()
         embd = self.tsne.fit(X=X,
                              affinities=affinities,
                              initialization=initialization)
@@ -82,4 +88,7 @@ class TSNEwrapper:
             self.aux_data["kl_div"] = np.array(self.logger.kl_divs)
         if self.logger.log_Z:
             self.aux_data["Zs"] = np.array(self.logger.Zs)
+
+        if self.logger.log_time:
+            self.aux_data["time"] = time.time() - start_time
         return embd
