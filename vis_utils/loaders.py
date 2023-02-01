@@ -316,6 +316,19 @@ def load_k49(root_dataset):
     return x, y
 
 
+def load_toy(root_path):
+    data_dir = os.path.join(root_path, "toy")
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+
+    p1 = np.array([0, 0])
+    p2 = np.array([1, 0])
+    p3 = np.array([0.5, np.sqrt(3)/2])
+
+    x= np.stack([p1, p2, p3])
+    y = np.arange(3, dtype=int)
+
+    return x, y
 
 # complete loader:
 def load_dataset(root_path, dataset, k=15):
@@ -361,6 +374,8 @@ def load_dataset(root_path, dataset, k=15):
         x, y = load_c_elegans(root_path)
     elif dataset == "k49":
         x, y = load_k49(root_path)
+    elif dataset == "toy":
+        x, y = load_toy(root_path)
     else:
         raise NotImplementedError
 
