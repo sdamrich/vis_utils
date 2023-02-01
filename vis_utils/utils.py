@@ -109,7 +109,7 @@ def kNN_graph(x, k, metric="euclidean"):
     """
     Pykeops implementation of a k nearest neighbor graph
     :param x: array containing the dataset
-    :param k: number of neartest neighbors
+    :param k: number of nearest neighbors
     :param metric: Metric used for distances of x, must be "euclidean" or "cosine".
     :return: array of shape (len(x), k) containing the indices of the k nearest neighbors of each datapoint
     """
@@ -170,7 +170,7 @@ def compute_normalization(x, sim_func="cauchy", no_diag=True, a=1.0, b=1.0, eps=
     :param eps: float Epsilon for numerically stable logarithm
     """
     x = x.astype(np.float32)
-
+    x = np.ascontiguousarray(x)
     if sim_func == "cauchy":
         sim_func = partial(compute_low_dim_psim_keops_embd, a=a, b=b)
     elif sim_func == "inv_sq":
