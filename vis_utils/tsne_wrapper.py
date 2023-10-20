@@ -78,6 +78,7 @@ class TSNEwrapper:
         # add the logs to aux_data
         self.aux_data["errors"] = np.array(self.logger.errors)
         self.aux_data["graph"] = embd.affinities.P.tocoo()
+        self.aux_data["init"] = initialization
 
 
         if self.logger.log_embds:
