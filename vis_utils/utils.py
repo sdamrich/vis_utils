@@ -110,7 +110,7 @@ def kNN_graph(x, k, metric="euclidean"):
     Pykeops implementation of a k nearest neighbor graph
     :param x: array containing the dataset
     :param k: number of nearest neighbors
-    :param metric: Metric used for distances of x, must be "euclidean" or "cosine".
+    :param metric: Metric used for distances of x, must be "euclidean" or "cosine" or "correlation"
     :return: array of shape (len(x), k) containing the indices of the k nearest neighbors of each datapoint
     """
     dists = keops_dists(x, metric)
@@ -121,7 +121,8 @@ def keops_dists(x, metric):
     """
     Creates a keops lazytensor with the pairwise distances.
     :param x: np.array(n, d) Data points
-    :param metric: str The metric used to compute the distance, must be one of "correlation", "euclidean" or "cosine"
+    :param metric: str The metric used to compute the distance, must be one of "correlation", "euclidean", "cosine"  or
+     "correlation
     :return: lazytensor (n, n)
     """
     x = torch.tensor(x).to("cuda").contiguous()
@@ -272,7 +273,7 @@ def get_ring(n, r, var=0, noise="gauss"):
 
 ## similarities
 @numba.njit()
-def low_dim_sim_dist(x, a, b, squared=False):
+def low_dim_sim_dist(x, a=1.0, b=1.0, squared=False):
     """
     Smooth function from distances to low-dimensional simiarlity. Compatible with numba.njit
     :param x: np.array pairwise distances
