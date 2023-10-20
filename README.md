@@ -16,6 +16,11 @@ conda env create -f environment.yml
 
 Optionally: Install [openTSNE](https://github.com/sdamrich/openTSNE) from source if you want to use the t-SNE wrapper.
 
+Optionally: Install the R environment for loading some single-cell datasets:
+```
+conda env create -f r_env.yml
+```
+
 
 Finish the installation of vis_utils:
 ```
