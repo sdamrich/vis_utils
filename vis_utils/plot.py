@@ -4,6 +4,7 @@ import pykeops
 import matplotlib
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 import matplotlib.animation as animation
+from matplotlib import collections  as mc
 
 from .utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_low_dim_sims, keops_identity
 
@@ -358,15 +359,22 @@ def get_scale(embd, max_length=0.5):
     spreads = embd.max(0) - embd.min(0)
     spread = spreads.max()
 
-    return 10 ** (int(np.log10(spread * max_length)))
+    return 10 ** (np.floor(np.log10(spread * max_length)))
 
 def add_scale(ax, embd):
     """
     Adds a scale bar
     """
     scale = get_scale(embd)
-    embd_w, embd_h = embd.max(0)- embd.min(0)
-    height =  0.005 * embd_h
+    if embd.shape[1] == 2:
+        embd_w, embd_h = embd.max(0) - embd.min(0)
+        height = 0.005 * embd_h
+
+    elif embd.shape[1] == 3:
+        embd_w, embd_h, embd_d = embd.max(0) - embd.min(0)
+        height = 0.00001 * embd_h
+    else:
+        raise NotImplementedError("Only 2D and 3D embeddings are supported")
 
     scalebar = AnchoredSizeBar(ax.transData,
                                scale,
@@ -376,12 +384,12 @@ def add_scale(ax, embd):
                                #borderpad= 0.5,
                                sep=4,
                                frameon=False,
-                               fontproperties={"size": 20})
+                               fontproperties={"size": 10})
     ax.add_artist(scalebar)
     return scalebar
 
 
-def plot_scatter(ax, x, y=None, title=None, cmap="tab10", s=1.0, alpha=0.5, scalebar=True):
+def plot_scatter(ax, x, y=None, title=None, scalebar=True, cmap="tab10", s=1.0, alpha=0.5, **kwargs ):
     """
     Produces a scatterplot for embeddings
     :param ax: Matplotlib axes to which the scatter plot is added
@@ -390,14 +398,22 @@ def plot_scatter(ax, x, y=None, title=None, cmap="tab10", s=1.0, alpha=0.5, scal
     :param title: Title of the plot
     :return: Matplotlib axes
     """
-    ax.scatter(*x.T, c=y, s=s, alpha=alpha, cmap=cmap, edgecolor="none")
+    scat = ax.scatter(*x.T, c=y, s=s, alpha=alpha, cmap=cmap, edgecolor="none", **kwargs)
     if scalebar:
         add_scale(ax, x)
-    ax.set_aspect("equal")
+    ax.set_aspect('equal', 'datalim')
     ax.axis("off")
     if title is not None:
         ax.set_title(title)
-    return ax
+    return scat
+
+
+def plot_edges(ax, x, graph, alpha=0.1, linewidths=0.5):
+    edges = np.stack([x[graph.row], x[graph.col]])
+    lc = mc.LineCollection(edges, color="k", zorder=-1, alpha=alpha, linewidths=linewidths)
+    ax.add_collection(lc)
+    return lc
+
 
 ##### animations from https://github.com/berenslab/ne-spectrum/blob/1f36313046d7cb8dfae7479de670a460e37da631/jnb_msc/plot/anim/anim.py
 
