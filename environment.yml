@@ -3,6 +3,8 @@ channels:
   - pytorch
   - defaults
 dependencies:
+  - anndata
+  - scanpy
   - matplotlib=3.3.2
   - matplotlib-base=3.3.2
   - numba=0.51.2
