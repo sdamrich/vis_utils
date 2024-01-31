@@ -47,9 +47,7 @@ def preprocess(metafile, countfile, line, n=1000, decay=1.5, n_components=50):
     impGenes = rnaseqTools.geneSelection(counts[ind, :], n=n, decay=decay, plot=False)
 
     # Transformations
-
-    X = np.log2(counts[:, impGenes][ind, :] / seqDepths * np.median(seqDepths) + 1)
-    X = np.array(X)
+    X = np.log2(np.array(counts[:, impGenes][ind, :]) / seqDepths * np.median(seqDepths) + 1)
     X = X - X.mean(axis=0)
     U, s, V = np.linalg.svd(X, full_matrices=False)
     X = np.dot(U, np.diag(s))
