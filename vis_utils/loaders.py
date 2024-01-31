@@ -156,27 +156,39 @@ def load_human(root_path):
         x = np.load(os.path.join(root_path, "human-409b2.data.npy"))
         y = np.load(os.path.join(root_path, "human-409b2.labels.npy"))
     except FileNotFoundError:
-        urls = ["https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.1.zip",
-                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.2.zip",
-                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.3.zip",
-                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.4.zip",
-                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.5.zip",
-                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.6.zip",
-                "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.7.zip",]
-        print("Downloading data")
-        for url in urls:
-            filename =  os.path.join(root_path, url.split("/")[-1])
-            urllib.request.urlretrieve(url, filename)
-            with zipfile.ZipFile(filename, "r") as zip_ref:
-                zip_ref.extractall(os.path.join(root_path, "unzipped_files"))
-
-        print("Preprocessing data")
+        #urls = ["https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.1.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.2.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.3.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.4.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.5.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.6.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.7.zip",]
         metafile = os.path.join(root_path,
-                                "unzipped_files",
+                                #"unzipped_files",
                                 "metadata_human_cells.tsv")
         countfile = os.path.join(root_path,
-                                 "unzipped_files",
+                                 #"unzipped_files",
                                  "human_cell_counts_consensus.mtx")
+        urls = []
+        if not os.path.exists(metafile):
+            urls.append("http://ftp.ebi.ac.uk/biostudies/nfs/E-MTAB-/552/E-MTAB-7552/Files/metadata_human_cells.tsv")
+        if not os.path.exists(countfile):
+            urls.append("http://ftp.ebi.ac.uk/biostudies/nfs/E-MTAB-/552/E-MTAB-7552/Files/human_cell_counts_consensus.mtx")
+
+        if len(urls) > 0:
+            print("Downloading data")
+        for url in urls:
+            filename = os.path.join(root_path, url.split("/")[-1])
+            #urllib.request.urlretrieve(url, filename)
+            download_file(url, filename)
+        #    print(filename)
+        #    #with zipfile.ZipFile(filename, "r") as zip_ref:
+        #    #    zip_ref.extractall(os.path.join(root_path, "unzipped_files"))
+        #    with tarfile.open(filename, "r:gz") as f:
+        #        f.extractall()
+        #    assert False
+
+        print("Preprocessing data")
         line = "409b2"
         X, stage = treut_preprocess(metafile, countfile, line)
 
@@ -187,7 +199,28 @@ def load_human(root_path):
         x = X
         y = stage
         print("Done")
-    return x, y
+
+    d = {"label_colors": {
+        "iPSCs": "navy",
+        "EB": "royalblue",
+        "Neuroectoderm": "skyblue",
+        "Neuroepithelium": "lightgreen",
+        "Organoid-1M": "gold",
+        "Organoid-2M": "tomato",
+        "Organoid-3M": "firebrick",
+        "Organoid-4M": "maroon",
+    }, "time_colors": {
+        "  0 days": "navy",
+        "  4 days": "royalblue",
+        "10 days": "skyblue",
+        "15 days": "lightgreen",
+        "  1 month": "gold",
+        "  2 months": "tomato",
+        "  3 months": "firebrick",
+        "  4 months": "maroon",
+    }}
+
+    return x, y, d
 
 
 
@@ -908,7 +941,7 @@ def load_dataset(root_path, dataset, k=15, seed=None):
     elif dataset == "cifar10":
         x, y = load_cifar10(root_path)
     elif dataset == "human-409b2":
-        x, y = load_human(root_path)
+        x, y, d = load_human(root_path)
     elif dataset == "zebrafish":
         x, y = load_zebrafish(root_path)
     elif dataset == "c_elegans":
