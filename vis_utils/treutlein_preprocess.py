@@ -20,11 +20,8 @@
 
 import numpy as np
 import pandas as pd
-import matplotlib
 import scipy
-import openTSNE
 
-from scipy import sparse
 from scipy.io import mmread
 from pathlib import Path
 
