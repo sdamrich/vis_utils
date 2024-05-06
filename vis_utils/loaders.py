@@ -155,6 +155,7 @@ def load_human(root_path):
     try:
         x = np.load(os.path.join(root_path, "human-409b2.data.npy"))
         y = np.load(os.path.join(root_path, "human-409b2.labels.npy"))
+        d = load_dict(os.path.join(root_path, "human-409b2.pkl"))
     except FileNotFoundError:
         #urls = ["https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.1.zip",
         #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.2.zip",
@@ -192,34 +193,48 @@ def load_human(root_path):
         line = "409b2"
         X, stage = treut_preprocess(metafile, countfile, line)
 
+
         outputfile = "human-409b2"
 
         np.save(os.path.join(root_path, outputfile + ".data.npy"), X)
         np.save(os.path.join(root_path, outputfile + ".labels.npy"), stage)
         x = X
         y = stage
+
         print("Done")
 
-    d = {"label_colors": {
-        "iPSCs": "navy",
-        "EB": "royalblue",
-        "Neuroectoderm": "skyblue",
-        "Neuroepithelium": "lightgreen",
-        "Organoid-1M": "gold",
-        "Organoid-2M": "tomato",
-        "Organoid-3M": "firebrick",
-        "Organoid-4M": "maroon",
-    }, "time_colors": {
-        "  0 days": "navy",
-        "  4 days": "royalblue",
-        "10 days": "skyblue",
-        "15 days": "lightgreen",
-        "  1 month": "gold",
-        "  2 months": "tomato",
-        "  3 months": "firebrick",
-        "  4 months": "maroon",
-    }}
+        # meta data
+        d = {"label_colors": {
+            "iPSCs": "navy",
+            "EB": "royalblue",
+            "Neuroectoderm": "skyblue",
+            "Neuroepithelium": "lightgreen",
+            "Organoid-1M": "gold",
+            "Organoid-2M": "tomato",
+            "Organoid-3M": "firebrick",
+            "Organoid-4M": "maroon",
+        }, "time_colors": {
+            "  0 days": "navy",
+            "  4 days": "royalblue",
+            "10 days": "skyblue",
+            "15 days": "lightgreen",
+            "  1 month": "gold",
+            "  2 months": "tomato",
+            "  3 months": "firebrick",
+            "  4 months": "maroon",
+        }}
 
+        # cluster assignments
+        meta = pd.read_csv(metafile, sep="\t")
+        mask = (meta["Line"] == "409b2")* meta["in_FullLineage"]
+
+        d["clusters"] = list(meta[mask]["cl_FullLineage"])
+
+        d["color_to_time"] = {v: k for k, v in d["time_colors"].items()}
+
+        save_dict(d, os.path.join(root_path, f"{outputfile}.pkl"))
+
+    d["clusters"] = np.array(d["clusters"])
     return x, y, d
 
 
@@ -515,6 +530,58 @@ def load_tasic3000(root_dataset):
         np.save(os.path.join(data_dir, "labels.npy"), y)
 
     return x, y, d
+
+
+def load_tasic_orange(root_path):
+    x, y, d = load_tasic(root_path)
+    mask_Pvalb = np.char.startswith(d["clusterNames"][d['clusters']], "Pvalb")
+    mask_Sst = np.char.startswith(d["clusterNames"][d['clusters']], "Sst")
+
+    mask = mask_Pvalb | mask_Sst
+
+    d["clusters"] = d["clusters"][mask]
+    d["counts"] = d["counts"][mask]
+    d["areas"] = d["areas"][mask]
+
+    return x[mask], y[mask], d
+
+
+def load_tasic_purple(root_path):
+    x, y, d = load_tasic(root_path)
+
+    mask_Vip = np.char.startswith(d["clusterNames"][d['clusters']], "Vip")
+    mask_Sncg = np.char.startswith(d["clusterNames"][d['clusters']], "Sncg")
+    mask_Serpinf1 = np.char.startswith(d["clusterNames"][d['clusters']], "Serpinf1")
+
+    mask = mask_Vip | mask_Sncg | mask_Serpinf1
+
+    d["clusters"] = d["clusters"][mask]
+    d["counts"] = d["counts"][mask]
+    d["areas"] = d["areas"][mask]
+
+    return x[mask], y[mask], d
+
+
+def load_small_tasic(root_path, dataset, seed=0, size=1000):
+    if dataset == "tasic":
+        x, y, d = load_tasic(root_path)
+    elif dataset == "tasic_orange":
+        x, y, d = load_tasic_orange(root_path)
+    elif dataset == "tasic_purple":
+        x, y, d = load_tasic_purple(root_path)
+    elif dataset == "tasic3000":
+        x, y, d = load_tasic3000(root_path)
+    else:
+        raise ValueError(f"Unknown dataset {dataset}")
+
+    np.random.seed(seed)
+    idx = np.random.choice(len(x), replace=False, size=size)
+
+    d["clusters"] = d["clusters"][idx]
+    d["counts"] = d["counts"][idx]
+    d["areas"] = d["areas"][idx]
+    d["idx"] = idx
+    return x[idx], y[idx], d
 
 
 def load_mca_ss2(root_path):
@@ -954,6 +1021,18 @@ def load_dataset(root_path, dataset, k=15, seed=None):
         x, y, d = load_tasic(root_path)
     elif dataset == "tasic3000":
         x, y, d = load_tasic3000(root_path)
+    elif dataset == "tasic_orange":
+        x, y, d = load_tasic_orange(root_path)
+    elif dataset == "tasic_purple":
+        x, y, d = load_tasic_purple(root_path)
+    elif dataset == "tasic_small":
+        x, y, d = load_small_tasic(root_path, "tasic", seed=seed, size=1000)
+    elif dataset == "tasic_orange_small":
+        x, y, d = load_small_tasic(root_path, "tasic_orange", seed=seed, size=1000)
+    elif dataset == "tasic_purple_small":
+        x, y, d = load_small_tasic(root_path, "tasic_purple", seed=seed, size=1000)
+    elif dataset == "tasic3000_small":
+        x, y, d = load_small_tasic(root_path, "tasic3000", seed=seed, size=1000)
     elif dataset == "mca_ss2":
         x, y,d = load_mca_ss2(root_path)
     elif dataset == "mca_ss2_idc":
