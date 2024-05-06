@@ -389,7 +389,7 @@ def add_scale(ax, embd):
     return scalebar
 
 
-def plot_scatter(ax, x, y=None, title=None, scalebar=True, cmap="tab10", s=1.0, alpha=0.5, **kwargs ):
+def plot_scatter(ax, x, y=None, title=None, scalebar=True, cmap="tab10", s=1.0, alpha=0.5, zorder=None, **kwargs ):
     """
     Produces a scatterplot for embeddings
     :param ax: Matplotlib axes to which the scatter plot is added
@@ -398,7 +398,10 @@ def plot_scatter(ax, x, y=None, title=None, scalebar=True, cmap="tab10", s=1.0, 
     :param title: Title of the plot
     :return: Matplotlib axes
     """
-    scat = ax.scatter(*x.T, c=y, s=s, alpha=alpha, cmap=cmap, edgecolor="none", **kwargs)
+    # if no color values are passed, cmap is pointless and we want to avoid the warning
+    if not (isinstance(y, np.ndarray) and y.dtype.kind in "if"):
+        cmap = None
+    scat = ax.scatter(*x.T, c=y, s=s, alpha=alpha, cmap=cmap, edgecolor="none",  zorder=zorder, **kwargs)
     if scalebar:
         add_scale(ax, x)
     ax.set_aspect('equal', 'datalim')
