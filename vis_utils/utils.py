@@ -70,9 +70,13 @@ def corr_pdist_subsample(x, y, sample_size, seed=0, metric="euclidean"):
     :return: tuple of Pearson and Spearman correlation coefficient
     """
     np.random.seed(seed)
-    sample_idx = np.random.randint(len(x), size=sample_size)
-    x_sample = x[sample_idx]
-    y_sample = y[sample_idx]
+    if sample_size == 0:
+        x_sample = x
+        y_sample = y
+    else:
+        sample_idx = np.random.randint(len(x), size=sample_size)
+        x_sample = x[sample_idx]
+        y_sample = y[sample_idx]
 
     x_dists = pairwise_distances(x_sample, metric=metric).flatten()
     y_dists = pairwise_distances(y_sample, metric="euclidean").flatten()
@@ -116,6 +120,12 @@ def kNN_graph(x, k, metric="euclidean"):
     dists = keops_dists(x, metric)
     knn_idx = dists.argKmin(K=k+1, dim=0)[:, 1:] # use k+1 neighbours and omit first, which is just the point itself
     return knn_idx
+
+
+def class_acc_knn(x, y, k, metric="euclidean"):
+    knn_idx = kNN_graph(x, k, metric=metric).cpu().numpy()
+    class_overlap = (y[:, None] == y[knn_idx]).sum(-1) / k
+    return class_overlap.mean()
 
 def keops_dists(x, metric):
     """
@@ -634,7 +644,8 @@ def KL_divergence(high_sim,
                   b=1.0,
                   sim_func="cauchy",
                   eps=float(np.finfo(float).eps),
-                  norm_over_pos=False):
+                  norm_over_pos=False,
+                  exaggeration=1):
     """
     Computes the KL divergence between the high-dimensional p and low-dimensional
     similarities q. The latter are inferred from the embedding.
@@ -645,6 +656,7 @@ def KL_divergence(high_sim,
     :param a: float shape parameter a
     :param b: float shape parameter b
     :param embedding: np.array Coordinates of embeddings
+    :param exaggeration: float How much attraction is exaggerated over repulsion.
     :return: float, KL divergence
     """
     heads = high_sim.row
@@ -678,9 +690,7 @@ def KL_divergence(high_sim,
                                               no_diag=True,
                                               eps=eps).cpu().numpy()
 
-        low_sim_pos_edges_norm = low_sim_pos_edges / total_low_sim
-
-
+        low_sim_pos_edges_norm = low_sim_pos_edges / total_low_sim**(1/exaggeration)
 
     high_sim_pos_edges_norm = high_sim.data / high_sim.data.sum()
 
