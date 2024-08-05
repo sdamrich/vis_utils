@@ -15,6 +15,7 @@ import tarfile
 import h5py
 import scanpy as sc
 import subprocess
+import matplotlib.pyplot as plt
 
 
 
@@ -354,6 +355,8 @@ def load_tasic(root_dataset):
         y = np.load(os.path.join(data_dir, "labels.npy"))
         d = load_dict(os.path.join(data_dir, "tasic2018.pkl"))
     except FileNotFoundError:
+
+        print("Downloading")
         urls = ["http://celltypes.brain-map.org/api/v2/well_known_file_download/694413985",
                 "http://celltypes.brain-map.org/api/v2/well_known_file_download/694413179",
                 "https://raw.githubusercontent.com/berenslab/mini-atlas/master/data/raw/allen/tasic2018/sample_heatmap_plot_data.csv"
@@ -372,7 +375,9 @@ def load_tasic(root_dataset):
             if file_name.endswith(".zip"):
                 with zipfile.ZipFile(file_name, "r") as zip_ref:
                     zip_ref.extractall(os.path.join(data_dir, file_name.split("/")[-1].strip(".zip")))
+        print("...done")
 
+        print("Preprocessing")
         # from https://github.com/berenslab/rna-seq-tsne/blob/master/tasic-et-al.ipynb
         file_name_VISp = os.path.join(data_dir, "mouse_VISp_gene_expression_matrices_2018-06-14", "mouse_VISp_2018-06-14_exon-matrix.csv")
         counts1, genes1, cells1 = sparseload(file_name_VISp)
@@ -395,6 +400,16 @@ def load_tasic(root_dataset):
         genes = np.array([id2symbol[g] for g in genes])
 
         clusterInfo = pd.read_csv(os.path.join(data_dir, "sample_heatmap_plot_data.csv"))
+
+        # correct the cluster labels in the meta data
+        wrong_to_correct = {'L6 CT ALM Nxph2 Sla': 'L6 CT Nxph2 Sla',
+                            'L6b VISp Col8a1 Rprm': 'L6b Col8a1 Rprm',
+                            'Sst Crh 4930553C11Rik ': 'Sst Crh 4930553C11Rik',
+                            'Sst Myh8 Etv1 ': 'Sst Myh8 Etv1'}
+
+        for wrong, correct in wrong_to_correct.items():
+            clusterInfo["cluster_label"] = clusterInfo["cluster_label"].replace(wrong, correct)
+
         goodCells = clusterInfo['sample_name'].values
         ids = clusterInfo['cluster_id'].values
         labels = clusterInfo['cluster_label'].values
@@ -403,6 +418,7 @@ def load_tasic(root_dataset):
         clusterNames = np.array([labels[ids == i + 1][0] for i in range(np.max(ids))])
         clusterColors = np.array([colors[ids == i + 1][0] for i in range(np.max(ids))])
         clusters = np.copy(ids)
+
 
         ind = np.array([np.where(cells == c)[0][0] for c in goodCells])
         counts = counts[ind, :]
@@ -414,6 +430,129 @@ def load_tasic(root_dataset):
         tasic2018 = {'counts': counts, 'genes': genes, 'clusters': clusters, 'areas': areas,
                      'clusterColors': clusterColors, 'clusterNames': clusterNames}
 
+        try:  #todo remove dependence on the clusterInfo file
+            cell_type_meta = pd.read_excel(os.path.join(data_dir, "41586_2018_654_MOESM3_ESM", "Supplementary_Table_9_Cell_types_markers.xlsx"))
+            full_meta = pd.read_excel(os.path.join(data_dir, "41586_2018_654_MOESM3_ESM", "Supplementary_Table_10_Full_Metadata.xlsx"))
+
+            ############################################################################
+            # corrections
+            ############################################################################
+            # correct the cluster labels in the full meta data
+            wrong_to_correct = {'L6 CT ALM Nxph2 Sla': 'L6 CT Nxph2 Sla',
+                                'L6b VISp Col8a1 Rprm': 'L6b Col8a1 Rprm',
+                                'Sst Crh 4930553C11Rik ': 'Sst Crh 4930553C11Rik',
+                                'Sst Myh8 Etv1 ': 'Sst Myh8 Etv1'}
+
+            for wrong, correct in wrong_to_correct.items():
+                full_meta["cluster"] = full_meta["cluster"].replace(wrong, correct)
+
+            # correct the subclasses in the full meta data
+            full_meta["subclass"] = full_meta["subclass"].replace("L4", "L4 IT")
+            full_meta["subclass"] = full_meta["subclass"].replace("NP", "L5 NP")
+
+            # correct the non-unique color for subclasses Sncg and Serpinf1, which both have color #8510C0
+            # get mean color for Serpinf1
+            def hex_to_rgb(hex_color):
+                """
+                Convert a hexadecimal color to an RGB tuple.
+                """
+                hex_color = hex_color.lstrip('#')
+                return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+            def rgb_to_hex(rgb_color):
+                """
+                Convert an RGB tuple to a hexadecimal color.
+                """
+                return '#{:02x}{:02x}{:02x}'.format(*rgb_color)
+
+            color1_serpinf1 = hex_to_rgb(cell_type_meta["cluster_color"].values[
+                                             np.where(cell_type_meta["cluster_label"] == "Serpinf1 Clrn1")[0]][0])
+            color2_serpinf1 = hex_to_rgb(cell_type_meta["cluster_color"].values[
+                                             np.where(cell_type_meta["cluster_label"] == "Serpinf1 Aqp5 Vip")[0]][0])
+
+            mean_color = tuple(np.mean([color1_serpinf1, color2_serpinf1], axis=0).astype(int))
+            mean_color_hex = rgb_to_hex(mean_color)
+            assert mean_color_hex not in cell_type_meta["subclass_color"].values
+
+            mask = cell_type_meta["subclass_label"] == "Serpinf1"
+            cell_type_meta.loc[mask, "subclass_color"] = [mean_color_hex] * mask.sum()
+
+            ############################################################################
+            # end of corrections
+            ############################################################################
+
+            # Create a dictionary to store the index of each element in the superset
+            full_idx = {value: idx for idx, value in enumerate(full_meta["sample_name"].values)}
+
+            # Create the mapping from subset index to superset index
+            id_to_full_id = {idx: full_idx[value] for idx, value in enumerate(clusterInfo["sample_name"].values)}
+
+            # Check that the mapping is correct by comparing the cluster names in full_meta and clusterInfo
+            for i, name in enumerate(clusterInfo["sample_name"].values):
+                full_id = id_to_full_id[i]
+                assert name == full_meta["sample_name"].values[full_id]
+
+            mapped_idx = [id_to_full_id[i] for i in range(len(clusterInfo["sample_name"].values))]
+
+            # get interesting meta data and put them in the same shape
+            cls = full_meta["class"].values[mapped_idx]
+            subcls = full_meta["subclass"].values[mapped_idx]
+            brain_region = full_meta["brain_region"].values[mapped_idx]
+            brain_subregion = full_meta["brain_subregion"].values[mapped_idx]
+            clusters_full = full_meta["cluster"].values[mapped_idx]
+
+            # check that the mapping is correct
+            assert np.all(clusters_full == clusterInfo["cluster_label"].values)
+
+
+            class_labels = np.unique(cell_type_meta["class_label"].values)
+            subclass_labels = np.unique(cell_type_meta["subclass_label"].values)
+
+            class_colors = np.unique(cell_type_meta["class_color"].values)
+            subclass_colors = np.unique(cell_type_meta["subclass_color"].values)
+
+            class_label_to_id = {label: idx for idx, label in enumerate(class_labels)}
+            class_id = np.array([class_label_to_id[label] for label in cls])
+
+            subclass_label_to_id = {label: idx for idx, label in enumerate(subclass_labels)}
+            subclass_id = np.array([subclass_label_to_id[label] for label in subcls])
+
+            # superflous bc cluster info already read from the other meta file
+            #cluster_labels = cell_type_meta["cluster_label"].values
+            #cluster_colors = cell_type_meta[
+            #    "cluster_color"].values
+            #cluster_label_to_id = {label: idx for idx, label in enumerate(cluster_labels)}
+            #cluster_id = np.array([cluster_label_to_id[label] for label in clusters_full])
+
+            brain_region_labels = np.unique(brain_region)
+            brain_region_colors = np.array(["r", "b"])
+            brain_region_label_to_id = {label: idx for idx, label in enumerate(brain_region_labels)}
+            brain_region_id = np.array([brain_region_label_to_id[label] for label in brain_region])
+
+            brain_subregion_labels = np.unique(brain_subregion)
+            brain_subregion_colors = plt.get_cmap("tab20")(np.linspace(0, 1, len(brain_subregion_labels)))
+            brain_subregion_label_to_id = {label: idx for idx, label in enumerate(brain_subregion_labels)}
+            brain_subregion_id = np.array([brain_subregion_label_to_id[label] for label in brain_subregion])
+
+            # put everything in the dictionary
+            tasic2018["classNames"] = class_labels
+            tasic2018["classColors"] = class_colors
+            tasic2018["classes"] = class_id
+
+            tasic2018["subclassNames"] = subclass_labels
+            tasic2018["subclassColors"] = subclass_colors
+            tasic2018["subclasses"] = subclass_id
+
+            tasic2018["brainRegionNames"] = brain_region_labels
+            tasic2018["brainRegionColors"] = brain_region_colors
+            tasic2018["brainRegions"] = brain_region_id
+
+            tasic2018["brainSubregionNames"] = brain_subregion_labels
+            tasic2018["brainSubregionColors"] = brain_subregion_colors
+            tasic2018["brainSubregions"] = brain_subregion_id
+        except FileNotFoundError:
+            print("Detailled meta data not found. Download from https://www.nature.com/articles/s41586-018-0654-5#Sec34")
+
         save_dict(tasic2018, os.path.join(data_dir, "tasic2018.pkl"))
 
         markerGenes = ['Snap25', 'Gad1', 'Slc17a7', 'Pvalb', 'Sst', 'Vip', 'Aqp4',
@@ -424,8 +563,10 @@ def load_tasic(root_dataset):
             markers=markerGenes, genes=tasic2018['genes'], plot=False)
 
         librarySizes = np.sum(tasic2018['counts'], axis=1)
-        X = np.log2(tasic2018['counts'][:, importantGenesTasic2018] / librarySizes * 1e+6 + 1)
-        X = np.array(X)
+
+        #X = np.log2(tasic2018['counts'][:, importantGenesTasic2018] / librarySizes * 1e+6 + 1)
+        X = (tasic2018['counts'][:, importantGenesTasic2018] / librarySizes * 1e+6).log1p() # / np.log(2)  # is supposed to be log_2 (1+x)
+        X = X.toarray()  # bc np.array() does not work with sparse matrices
         X = X - X.mean(axis=0)
         U, s, V = np.linalg.svd(X, full_matrices=False)
         U[:, np.sum(V, axis=1) < 0] *= -1
@@ -438,7 +579,7 @@ def load_tasic(root_dataset):
 
         np.save(os.path.join(data_dir, "pca50.npy"), x)
         np.save(os.path.join(data_dir, "labels.npy"), y)
-
+        print("...done.")
     return x, y, d
 
 
