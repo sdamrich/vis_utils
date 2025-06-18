@@ -28,7 +28,7 @@ from pathlib import Path
 import vis_utils.rnaseqTools as rnaseqTools
 
 
-def preprocess(metafile, countfile, line, n=1000, decay=1.5, n_components=50):
+def log_imp_genes(metafile, countfile, line, n=1000, decay=1.5):
     meta = pd.read_csv(metafile, sep="\t")
 
     counts = mmread(str(countfile))
@@ -42,9 +42,16 @@ def preprocess(metafile, countfile, line, n=1000, decay=1.5, n_components=50):
     stage = meta["Stage"].values[ind].astype("str")
 
     impGenes = rnaseqTools.geneSelection(counts[ind, :], n=n, decay=decay, plot=False)
-
+    print("selected important genes")
     # Transformations
-    X = np.log2(np.array(counts[:, impGenes][ind, :]) / seqDepths * np.median(seqDepths) + 1)
+    X = np.log2((counts[:, impGenes][ind, :]).toarray() / seqDepths * np.median(seqDepths) + 1)
+    print("log1p transformed data")
+    return X, stage
+
+def preprocess(metafile, countfile, line, n=1000, decay=1.5, n_components=50):
+
+    X, stage = log_imp_genes(metafile, countfile, line, n=n, decay=decay)
+
     X = X - X.mean(axis=0)
     U, s, V = np.linalg.svd(X, full_matrices=False)
     X = np.dot(U, np.diag(s))

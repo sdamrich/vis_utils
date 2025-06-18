@@ -5,10 +5,13 @@ import torchvision
 import scipy.sparse
 from .utils import kNN_graph, save_dict, load_dict
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 import zipfile
 from .treutlein_preprocess import preprocess as treut_preprocess
+from .treutlein_preprocess import log_imp_genes as treut_log_imp_genes
 from .zfish_preprocess import preprocess as zfish_preprocess
 from .rnaseqTools import geneSelection, sparseload
+from .toy_data import hierarchical_gaussian_mixture
 import urllib.request
 import requests
 import tarfile
@@ -228,6 +231,97 @@ def load_human(root_path):
         # cluster assignments
         meta = pd.read_csv(metafile, sep="\t")
         mask = (meta["Line"] == "409b2")* meta["in_FullLineage"]
+
+        d["clusters"] = list(meta[mask]["cl_FullLineage"])
+
+        d["color_to_time"] = {v: k for k, v in d["time_colors"].items()}
+
+        save_dict(d, os.path.join(root_path, f"{outputfile}.pkl"))
+
+    d["clusters"] = np.array(d["clusters"])
+    return x, y, d
+
+
+def load_human1000(root_path):
+    root_path = os.path.join(root_path, "human1000")
+    if not os.path.exists(root_path):
+        os.mkdir(root_path)
+
+    try:
+        x = np.load(os.path.join(root_path, "human1000.data.npy"))
+        y = np.load(os.path.join(root_path, "human1000.labels.npy"))
+        d = load_dict(os.path.join(root_path, "human1000.pkl"))
+    except FileNotFoundError:
+        # urls = ["https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.1.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.2.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.3.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.4.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.5.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.6.zip",
+        #        "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-7552/E-MTAB-7552.processed.7.zip",]
+        metafile = os.path.join(root_path,
+                                # "unzipped_files",
+                                "metadata_human_cells.tsv")
+        countfile = os.path.join(root_path,
+                                 # "unzipped_files",
+                                 "human_cell_counts_consensus.mtx")
+        urls = []
+        if not os.path.exists(metafile):
+            urls.append("http://ftp.ebi.ac.uk/biostudies/nfs/E-MTAB-/552/E-MTAB-7552/Files/metadata_human_cells.tsv")
+        if not os.path.exists(countfile):
+            urls.append(
+                "http://ftp.ebi.ac.uk/biostudies/nfs/E-MTAB-/552/E-MTAB-7552/Files/human_cell_counts_consensus.mtx")
+
+        if len(urls) > 0:
+            print("Downloading data")
+        for url in urls:
+            filename = os.path.join(root_path, url.split("/")[-1])
+            # urllib.request.urlretrieve(url, filename)
+            download_file(url, filename)
+        #    print(filename)
+        #    #with zipfile.ZipFile(filename, "r") as zip_ref:
+        #    #    zip_ref.extractall(os.path.join(root_path, "unzipped_files"))
+        #    with tarfile.open(filename, "r:gz") as f:
+        #        f.extractall()
+        #    assert False
+
+        print("Preprocessing data")
+        line = "409b2"
+        X, stage = treut_log_imp_genes(metafile, countfile, line)
+
+        outputfile = "human1000"
+
+        np.save(os.path.join(root_path, outputfile + ".data.npy"), X)
+        np.save(os.path.join(root_path, outputfile + ".labels.npy"), stage)
+        x = X
+        y = stage
+
+        print("Done")
+
+        # meta data
+        d = {"label_colors": {
+            "iPSCs": "navy",
+            "EB": "royalblue",
+            "Neuroectoderm": "skyblue",
+            "Neuroepithelium": "lightgreen",
+            "Organoid-1M": "gold",
+            "Organoid-2M": "tomato",
+            "Organoid-3M": "firebrick",
+            "Organoid-4M": "maroon",
+        }, "time_colors": {
+            "  0 days": "navy",
+            "  4 days": "royalblue",
+            "10 days": "skyblue",
+            "15 days": "lightgreen",
+            "  1 month": "gold",
+            "  2 months": "tomato",
+            "  3 months": "firebrick",
+            "  4 months": "maroon",
+        }}
+
+        # cluster assignments
+        meta = pd.read_csv(metafile, sep="\t")
+        mask = (meta["Line"] == "409b2") * meta["in_FullLineage"]
 
         d["clusters"] = list(meta[mask]["cl_FullLineage"])
 
@@ -1112,6 +1206,61 @@ def load_toy(root_path):
     return x, y
 
 
+def load_hier_gauss_mix(data_dir, n, d, sigma=0.0, std=0.2, levels=3, c=5, seed=0):
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+
+    # load data if it exists, otherwise create and save
+    try:
+        a = np.load(os.path.join(data_dir, "data.npz"))
+        x = a["x"]
+        gts = a["gts"]
+    except FileNotFoundError:
+        x, gts = hierarchical_gaussian_mixture(n=n,
+                                               d=d,
+                                               sigma=sigma,
+                                               std=std,
+                                               levels=levels,
+                                               c=c,
+                                               seed=seed)
+        np.savez(os.path.join(data_dir, "data.npz"), x=x, gts=gts)
+
+    y = gts[-1]
+    d = {"gts": gts}
+
+    return x, y, d
+
+
+
+
+def load_densired(root_path, dataset_variant="densired", dim=8):
+    """
+    Load the Densired dataset for a specific dimension.
+    :param root_path: Path to the dataset directory.
+    :param d: Dimension of the dataset to load.
+    :return: Data and ground truth labels.
+    """
+    try:
+        a = np.load(os.path.join(root_path, f"{dataset_variant}_d_{dim}", f"{dataset_variant}_d_{dim}.npz"))
+        x = a["x"]
+        y = a["y"]
+    except FileNotFoundError:
+        # based on https://anonymous.4open.science/r/tneb_clustering-4056/src/corc/create_datasets/complex_datasets.py
+        with open(os.path.join(root_path, f"{dataset_variant}.npz"), "rb") as f:
+            data = np.load(f)
+            # "files" within a npz-file cannot be named with numbers only, thus the f-string
+            x = data[f"d{dim}"][:, :-1]
+            y = data[f"d{dim}"][:, -1]
+        x = StandardScaler().fit_transform(x)
+
+        # Save the data for future use
+        if not os.path.exists(os.path.join(root_path, f"{dataset_variant}_d_{dim}")):
+            os.makedirs(os.path.join(root_path, f"{dataset_variant}_d_{dim}"))
+        np.savez(os.path.join(root_path, f"{dataset_variant}_d_{dim}", f"{dataset_variant}_d_{dim}.npz"), x=x, y=y)
+
+    return x, y, {}
+
+
 # complete loader:
 def load_dataset(root_path, dataset, k=15, seed=None):
     # load dataset
@@ -1238,6 +1387,16 @@ def load_dataset(root_path, dataset, k=15, seed=None):
         x, y, d = load_subsampled_pallium(root_path, "pallium_scVI_IPC", seed=seed, n=1000)
     elif dataset == "pallium_scVI_IPC_medium":
         x, y, d = load_subsampled_pallium(root_path, "pallium_scVI_IPC", seed=seed, n=5000)
+    elif dataset.startswith("hier_gauss_mix"):
+        params = dataset.split("_")[3:]
+        assert len(params) % 2 == 0, "Parameters should be in pairs, e.g. n_1000_d_3_levels_3_c_4_sigma_0.0_std_0.2_seed_0"
+        args = {params[i]: int(params[i+1]) if "." not in params[i+1] else float(params[i+1]) for i in range(0, len(params), 2)}
+
+        x, y, d = load_hier_gauss_mix(os.path.join(root_path, dataset), **args)
+    elif dataset.startswith("densired"):
+        dataset_variant, dim = dataset.split("_d_")
+        dim = int(dim)
+        x, y, d = load_densired(root_path, dataset_variant=dataset_variant, dim=dim)
     else:
         raise NotImplementedError
 
@@ -1286,5 +1445,35 @@ def load_dataset(root_path, dataset, k=15, seed=None):
 
 
 
+
+############################################
+# hierarchical datasets
+############################################
+
+
+def load_hier_dataset(root_path, dataset, k=15):
+    # flat clusters go from fine to coarse, including the clump clustering
+    x, y, graph, pca2, d = load_dataset(root_path, dataset, k=k)
+
+    if dataset == "tasic":
+        gts = tasic_gt(d)
+    elif dataset.startswith("hier_gauss_mix"):
+        gts = d["gts"]
+    else:
+        raise ValueError(f"No hierarchy for  {dataset}")
+    return x, y, graph, d, gts
+
+def tasic_gt(tasic_d):
+    gaba_mask = tasic_d["classes"] == 1
+    glut_mask = tasic_d["classes"] == 2
+
+    neuron_non_neuron_mask = gaba_mask | glut_mask
+
+    gts = np.array([tasic_d["clusters"],
+                    tasic_d["subclasses"],
+                    tasic_d["classes"],
+                    neuron_non_neuron_mask,
+                    np.zeros(len(tasic_d["classes"]))])
+    return gts
 
 
