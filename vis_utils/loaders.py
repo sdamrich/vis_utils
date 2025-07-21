@@ -1231,6 +1231,34 @@ def load_hier_gauss_mix(data_dir, n, d, sigma=0.0, std=0.2, levels=3, c=5, seed=
     return x, y, d
 
 
+#based on https://anonymous.4open.science/r/tneb_clustering-4056/src/corc/create_datasets/complex_datasets.py
+def make_mnist_nd(root_path, dim=8):
+    df = pd.read_pickle(os.path.join(root_path, "mvae_mnist_nd_saved.pkl"))
+    X = df["data"][dim]
+    y = df["labels"][dim]
+    X = StandardScaler().fit_transform(X)
+    return X, y
+
+def load_mnist_nd(root_path, dim=8):
+    """
+    Load the MNIST dataset for a specific dimension.
+    :param root_path: Path to the dataset directory.
+    :param dim: Dimension of the dataset to load.
+    :return: Data and ground truth labels.
+    """
+    try:
+        a = np.load(os.path.join(root_path, f"mnistND_d_{dim}", f"mnistND_d_{dim}.npz"))
+        x = a["x"]
+        y = a["y"]
+    except FileNotFoundError:
+        x, y = make_mnist_nd(root_path, dim=dim)
+
+        # Save the data for future use
+        if not os.path.exists(os.path.join(root_path, f"mnistND_d_{dim}")):
+            os.makedirs(os.path.join(root_path, f"mnistND_d_{dim}"))
+        np.savez(os.path.join(root_path, f"mnistND_d_{dim}", f"mnistND_d_{dim}.npz"), x=x, y=y.astype(int))
+
+    return x, y, {}
 
 
 def load_densired(root_path, dataset_variant="densired", dim=8):
@@ -1250,7 +1278,7 @@ def load_densired(root_path, dataset_variant="densired", dim=8):
             data = np.load(f)
             # "files" within a npz-file cannot be named with numbers only, thus the f-string
             x = data[f"d{dim}"][:, :-1]
-            y = data[f"d{dim}"][:, -1]
+            y = data[f"d{dim}"][:, -1].astype(int)
         x = StandardScaler().fit_transform(x)
 
         # Save the data for future use
@@ -1397,6 +1425,10 @@ def load_dataset(root_path, dataset, k=15, seed=None):
         dataset_variant, dim = dataset.split("_d_")
         dim = int(dim)
         x, y, d = load_densired(root_path, dataset_variant=dataset_variant, dim=dim)
+
+    elif dataset.startswith("mnistND"):
+        dim = int(dataset.split("_d_")[1])
+        x, y, d = load_mnist_nd(root_path, dim=int(dim))
     else:
         raise NotImplementedError
 
@@ -1419,7 +1451,7 @@ def load_dataset(root_path, dataset, k=15, seed=None):
         sknn_graph = scipy.sparse.load_npz(knn_file_name)
     except IOError:
         x_for_knn = x
-        if dataset.startswith("mnist") or dataset == "k49" or dataset == "cifar10":
+        if (dataset.startswith("mnist") and not dataset.startswith("mnistND")) or dataset == "k49" or dataset == "cifar10":
             try:
                 pca50 = np.load(os.path.join(root_path, dataset, "pca50.npy"))
             except FileNotFoundError:
